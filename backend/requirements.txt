@@ -1,0 +1,38 @@
+# === API ===
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic-settings
+python-dotenv
+
+# === LangChain / LangGraph ===
+langchain
+langchain-community
+langchain-chroma
+langchain-huggingface
+langgraph
+
+# === Embeddings & Vector Store ===
+sentence-transformers
+chromadb
+huggingface-hub
+
+# === Document Loaders ===
+pypdf
+docx2txt
+openpyxl
+unstructured
+
+# === Image Processing ===
+PyMuPDF
+python-docx
+Pillow
+
+# === LLM Client ===
+httpx
+
+# === Monitoring ===
+langsmith
+
+# === Utils ===
+aiofiles

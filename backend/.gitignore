@@ -1,0 +1,23 @@
+# Data (local-only, never committed)
+data/uploads/
+data/chroma_db/
+data/images/
+data/*.sqlite
+
+# Environment
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+*.egg
+build/
+dist/
+*.whl
+
+# HuggingFace model cache
+.cache/
