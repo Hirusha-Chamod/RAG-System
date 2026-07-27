@@ -1,0 +1,33 @@
+# Data (local-only, never committed)
+backend/data/uploads/
+backend/data/chroma_db/
+backend/data/images/
+backend/data/*.sqlite
+
+# Environment
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (frontend)
+node_modules/
+dist/
+
+# Python
+*.egg-info/
+*.egg
+build/
+*.whl
+
+# HuggingFace model cache (if accidentally placed in project)
+.cache/
