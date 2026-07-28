@@ -14,43 +14,37 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.utils.logging import setup_logging, get_logger
+from app.ingestion.parent_store import init_db as init_parent_store
+from app.ingestion.image_cache import init_db as init_image_cache
+from app.api.routes_ingest import router as ingest_router
 
 logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup and shutdown lifecycle for the FastAPI app.
-    
-    Startup:
-        - Configure logging
-        - Create data directories
-        - Set LangSmith environment variables
-        - (Phase 2) Initialize SQLite databases
-        - (Phase 3) Compile LangGraph workflow
-    
-    Shutdown:
-        - Cleanup resources if needed
-    """
+    """Startup and shutdown lifecycle for the FastAPI app."""
     # ── Startup ──
     setup_logging()
     logger.info("Starting AI Nexus RAG Engine...")
 
-    # Create data directories (uploads, chroma_db, images)
+    # Create data directories
     settings.ensure_data_dirs()
     logger.info("Data directories verified")
 
-    # Configure LangSmith tracing (env vars read by LangChain automatically)
+    # Configure LangSmith tracing
     settings.setup_langsmith_env()
     if settings.LANGSMITH_API_KEY:
         logger.info(f"LangSmith tracing enabled → project: {settings.LANGSMITH_PROJECT}")
     else:
         logger.info("LangSmith tracing disabled (no API key)")
 
-    # Phase 2: Initialize parent store + long-term memory databases
-    # from app.ingestion.parent_store import init_db as init_parent_store
+    # Phase 2: Initialize SQLite databases (parent store & image cache)
+    init_parent_store()
+    init_image_cache()
+
+    # Phase 4: Long-term memory database (init when Phase 4 is reached)
     # from app.memory.long_term import init_db as init_long_term_memory
-    # init_parent_store()
     # init_long_term_memory()
 
     # Phase 3: Compile the LangGraph workflow and store on app.state
@@ -71,11 +65,11 @@ app = FastAPI(
     title="AI Nexus RAG Engine",
     description="RAG-powered chatbot backend with multi-session memory, "
                 "document ingestion, and image understanding.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
-# ── CORS middleware — allows the React frontend to call the API ──
+# ── CORS middleware ──
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -84,18 +78,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Mount routers (uncommented as phases are completed) ──
-# Phase 2:
-# from app.api.routes_ingest import router as ingest_router
-# app.include_router(ingest_router, tags=["Ingestion"])
+# ── Mount routers ──
+app.include_router(ingest_router, tags=["Ingestion"])
 
-# Phase 3:
+# Phase 3 routers (chat & retrieve) will be mounted in Phase 3
 # from app.api.routes_chat import router as chat_router
 # from app.api.routes_retrieve import router as retrieve_router
 # app.include_router(chat_router, tags=["Chat"])
 # app.include_router(retrieve_router, tags=["Retrieval"])
 
-# Phase 4:
+# Phase 4 router (memory) will be mounted in Phase 4
 # from app.api.routes_memory import router as memory_router
 # app.include_router(memory_router, tags=["Memory"])
 
@@ -103,10 +95,19 @@ app.add_middleware(
 # ── Health check ──
 @app.get("/health", tags=["System"])
 async def health_check():
-    """Health check endpoint. Returns 200 if the server is running."""
+    """Health check endpoint."""
     return {
         "status": "healthy",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "embedding_mode": settings.EMBEDDING_MODE,
         "llm_model": settings.LLM_MODEL,
+    }
+
+
+@app.get("/models", tags=["System"])
+async def list_models():
+    """Returns the dictionary of whitelisted free models available for client selection."""
+    return {
+        "default_model": settings.DEFAULT_MODEL,
+        "models": settings.ALLOWED_MODELS,
     }

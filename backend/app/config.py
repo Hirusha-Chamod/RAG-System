@@ -3,8 +3,6 @@ Environment-driven configuration using Pydantic BaseSettings.
 
 All settings are read from environment variables or a .env file.
 Import the singleton: `from app.config import settings`
-
-To understand what each setting does, see .env.example.
 """
 
 import os
@@ -17,9 +15,19 @@ class Settings(BaseSettings):
 
     # ── OpenRouter (LLM) ──
     OPENROUTER_API_KEY: str = ""
-    LLM_MODEL: str = "openai/gpt-4o-mini"
-    VISION_LLM_MODEL: str = "openai/gpt-4o-mini"
+    LLM_MODEL: str = "tencent/hy3:free"
+    VISION_LLM_MODEL: str = "nvidia/nemotron-nano-12b-v2-vl:free"
+    SUMMARY_MODEL: str = "nvidia/nemotron-nano-9b-v2:free"
+    DEFAULT_MODEL: str = "tencent/hy3:free"
     APP_URL: str = "http://localhost:8000"
+
+    # Server-side whitelisted models for client selection (/models endpoint)
+    ALLOWED_MODELS: dict[str, str] = {
+        "tencent/hy3:free": "Tencent Hy3 (Balanced, built for grounded/anti-hallucination answers)",
+        "google/gemma-4-31b-it:free": "Gemma 4 31B (Strong document understanding)",
+        "nvidia/nemotron-3-super-120b-a12b:free": "Nemotron 3 Super (Best for very large documents, 1M context)",
+        "openai/gpt-oss-20b:free": "GPT-OSS 20B (Fastest responses)",
+    }
 
     # ── Embeddings ──
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
@@ -30,6 +38,7 @@ class Settings(BaseSettings):
     CHROMA_DB_PATH: str = "./data/chroma_db"
     PARENT_STORE_PATH: str = "./data/parent_store.sqlite"
     LONG_TERM_DB_PATH: str = "./data/memory.sqlite"
+    IMAGE_CACHE_DB_PATH: str = "./data/image_cache.sqlite"
     UPLOAD_DIR: str = "./data/uploads"
     IMAGE_DIR: str = "./data/images"
 
@@ -53,24 +62,23 @@ class Settings(BaseSettings):
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
-        "extra": "ignore",  # don't fail on unknown env vars
+        "extra": "ignore",
     }
 
     def ensure_data_dirs(self) -> None:
         """Create all data directories at startup. Idempotent."""
         for dir_path in [self.CHROMA_DB_PATH, self.UPLOAD_DIR, self.IMAGE_DIR]:
             Path(dir_path).mkdir(parents=True, exist_ok=True)
-        # SQLite files are created on first connect,
-        # but their parent directories need to exist
-        for file_path in [self.PARENT_STORE_PATH, self.LONG_TERM_DB_PATH]:
+        # SQLite files are created on first connect, but their parent dirs need to exist
+        for file_path in [
+            self.PARENT_STORE_PATH,
+            self.LONG_TERM_DB_PATH,
+            self.IMAGE_CACHE_DB_PATH,
+        ]:
             Path(file_path).parent.mkdir(parents=True, exist_ok=True)
 
     def setup_langsmith_env(self) -> None:
-        """Push LangSmith settings into os.environ.
-        
-        LangChain/LangGraph read tracing config from env vars automatically.
-        We set them here so they're available before the graph compiles.
-        """
+        """Push LangSmith settings into os.environ."""
         if self.LANGSMITH_API_KEY:
             os.environ.setdefault("LANGSMITH_TRACING", self.LANGSMITH_TRACING)
             os.environ.setdefault("LANGSMITH_API_KEY", self.LANGSMITH_API_KEY)
@@ -78,5 +86,5 @@ class Settings(BaseSettings):
             os.environ.setdefault("LANGSMITH_ENDPOINT", self.LANGSMITH_ENDPOINT)
 
 
-# Singleton — imported by every other module
+# Singleton
 settings = Settings()
