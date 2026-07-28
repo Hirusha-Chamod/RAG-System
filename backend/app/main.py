@@ -14,8 +14,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.utils.logging import setup_logging, get_logger
+from app.auth.users_db import init_db as init_users_db
 from app.ingestion.parent_store import init_db as init_parent_store
 from app.ingestion.image_cache import init_db as init_image_cache
+from app.api.routes_auth import router as auth_router
 from app.api.routes_ingest import router as ingest_router
 
 logger = get_logger(__name__)
@@ -39,18 +41,18 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("LangSmith tracing disabled (no API key)")
 
-    # Phase 2: Initialize SQLite databases (parent store & image cache)
+    # Initialize SQLite databases (users, parent store & image cache)
+    init_users_db()
     init_parent_store()
     init_image_cache()
 
-    # Phase 4: Long-term memory database (init when Phase 4 is reached)
+    # Phase 4: Long-term memory database
     # from app.memory.long_term import init_db as init_long_term_memory
     # init_long_term_memory()
 
-    # Phase 3: Compile the LangGraph workflow and store on app.state
+    # Phase 3: Compile the LangGraph workflow
     # from app.core.graph import build_graph
     # app.state.graph = build_graph()
-    # logger.info("LangGraph workflow compiled")
 
     logger.info(f"Server ready — docs at {settings.APP_URL}/docs")
 
@@ -60,12 +62,12 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down AI Nexus RAG Engine...")
 
 
-# ── Create the FastAPI application ──
+# ── Create FastAPI application ──
 app = FastAPI(
     title="AI Nexus RAG Engine",
-    description="RAG-powered chatbot backend with multi-session memory, "
+    description="RAG-powered chatbot backend with JWT authentication, multi-session memory, "
                 "document ingestion, and image understanding.",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -79,6 +81,7 @@ app.add_middleware(
 )
 
 # ── Mount routers ──
+app.include_router(auth_router)
 app.include_router(ingest_router, tags=["Ingestion"])
 
 # Phase 3 routers (chat & retrieve) will be mounted in Phase 3
@@ -98,7 +101,7 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "embedding_mode": settings.EMBEDDING_MODE,
         "llm_model": settings.LLM_MODEL,
     }

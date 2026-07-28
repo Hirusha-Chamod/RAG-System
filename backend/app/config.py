@@ -1,8 +1,5 @@
 """
 Environment-driven configuration using Pydantic BaseSettings.
-
-All settings are read from environment variables or a .env file.
-Import the singleton: `from app.config import settings`
 """
 
 import os
@@ -12,6 +9,11 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     """Application settings — loaded from environment variables / .env file."""
+
+    # ── JWT Authentication ──
+    JWT_SECRET_KEY: str = "ai-nexus-rag-engine-secret-key-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
 
     # ── OpenRouter (LLM) ──
     OPENROUTER_API_KEY: str = ""
@@ -39,6 +41,7 @@ class Settings(BaseSettings):
     PARENT_STORE_PATH: str = "./data/parent_store.sqlite"
     LONG_TERM_DB_PATH: str = "./data/memory.sqlite"
     IMAGE_CACHE_DB_PATH: str = "./data/image_cache.sqlite"
+    USERS_DB_PATH: str = "./data/users.sqlite"
     UPLOAD_DIR: str = "./data/uploads"
     IMAGE_DIR: str = "./data/images"
 
@@ -69,11 +72,12 @@ class Settings(BaseSettings):
         """Create all data directories at startup. Idempotent."""
         for dir_path in [self.CHROMA_DB_PATH, self.UPLOAD_DIR, self.IMAGE_DIR]:
             Path(dir_path).mkdir(parents=True, exist_ok=True)
-        # SQLite files are created on first connect, but their parent dirs need to exist
+        # SQLite files parent dirs
         for file_path in [
             self.PARENT_STORE_PATH,
             self.LONG_TERM_DB_PATH,
             self.IMAGE_CACHE_DB_PATH,
+            self.USERS_DB_PATH,
         ]:
             Path(file_path).parent.mkdir(parents=True, exist_ok=True)
 

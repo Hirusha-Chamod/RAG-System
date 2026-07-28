@@ -1,18 +1,13 @@
 """
 Multipart file upload ingestion endpoint: POST /ingest
 
-Processes PDF, DOCX, XLSX, TXT, MD, PNG, JPG files:
-1. Extracts text via loaders
-2. Extracts images (PyMuPDF for PDF, zipfile for DOCX/XLSX)
-3. Generates vision descriptions with SHA256 caching & 3KB size threshold
-4. Inlines descriptions into parent document text
-5. Splits text into parents (~2000 ch) and children (~400 ch)
-6. Saves parents in SQLite, embeds children into ChromaDB with user_id metadata
+Secured with Depends(get_current_user) JWT Bearer authentication.
+User ID is securely extracted from token (cannot be spoofed by client).
 """
 
 import os
 import uuid
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Depends
 from app.ingestion.loaders import load_file, SUPPORTED_EXTENSIONS
 from app.ingestion.image_extraction import extract_images_pdf, extract_images_from_zip
 from app.ingestion.image_describer import describe_image
@@ -20,6 +15,7 @@ from app.ingestion.chunking import split_into_parents_and_children
 from app.ingestion.parent_store import save_parent
 from app.ingestion.vectorstore import get_vectorstore
 from app.models.schemas import IngestResponse, IngestFileResult
+from app.api.deps import get_current_user
 from app.config import settings
 from app.utils.logging import get_logger
 
@@ -30,9 +26,10 @@ router = APIRouter()
 @router.post("/ingest", response_model=IngestResponse)
 async def ingest_files(
     files: list[UploadFile] = File(...),
-    user_id: str = Form(...),
+    current_user: dict = Depends(get_current_user),
 ):
-    """Ingest one or more files into the RAG pipeline."""
+    """Ingest one or more files into the RAG pipeline for the authenticated user."""
+    user_id = current_user["user_id"]
     results = []
     total_chunks = 0
     total_images = 0

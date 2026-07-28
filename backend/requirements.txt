@@ -5,6 +5,11 @@ python-multipart
 pydantic-settings
 python-dotenv
 
+# === Auth & Security ===
+pyjwt
+bcrypt
+email-validator
+
 # === LangChain / LangGraph ===
 langchain
 langchain-community
@@ -36,3 +41,4 @@ langsmith
 
 # === Utils ===
 aiofiles
+pytest

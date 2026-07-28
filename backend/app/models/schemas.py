@@ -1,16 +1,47 @@
 """
 Pydantic request/response models for all API endpoints.
-
-These define the contract between the backend and any client (React UI, AI Nexus, etc.).
-FastAPI uses these to auto-generate OpenAPI docs at /docs.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from typing import Optional, Literal
 
 
 # ──────────────────────────────────────────────
-# Ingest (Phase 2)
+# Authentication
+# ──────────────────────────────────────────────
+
+class UserSignupRequest(BaseModel):
+    """Request body for POST /auth/signup."""
+    username: str
+    email: EmailStr
+    password: str
+
+
+class UserLoginRequest(BaseModel):
+    """Request body for POST /auth/login."""
+    username_or_email: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    """JWT response from POST /auth/login or POST /auth/signup."""
+    access_token: str
+    token_type: str = "bearer"
+    user_id: str
+    username: str
+    email: str
+
+
+class UserResponse(BaseModel):
+    """Authenticated user info response."""
+    user_id: str
+    username: str
+    email: str
+    created_at: float
+
+
+# ──────────────────────────────────────────────
+# Ingest
 # ──────────────────────────────────────────────
 
 class IngestFileResult(BaseModel):
@@ -30,14 +61,14 @@ class IngestResponse(BaseModel):
 
 
 # ──────────────────────────────────────────────
-# Chat (Phase 3)
+# Chat
 # ──────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
     """Request body for POST /chat."""
     message: str
-    user_id: str
     session_id: str
+    model: Optional[str] = None
 
 
 class SourceDoc(BaseModel):
@@ -53,16 +84,16 @@ class ChatResponse(BaseModel):
     sources: list[SourceDoc]
     session_id: str
     relevance_ok: bool
+    model_used: str
 
 
 # ──────────────────────────────────────────────
-# Retrieve (Phase 3)
+# Retrieve
 # ──────────────────────────────────────────────
 
 class RetrieveRequest(BaseModel):
     """Request body for POST /retrieve — raw retrieval, no LLM."""
     query: str
-    user_id: str
     k: int = 5
 
 
@@ -73,7 +104,7 @@ class RetrieveResponse(BaseModel):
 
 
 # ──────────────────────────────────────────────
-# Memory (Phase 4)
+# Memory
 # ──────────────────────────────────────────────
 
 class MemoryEntry(BaseModel):
