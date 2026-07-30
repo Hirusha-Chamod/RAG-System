@@ -1,11 +1,12 @@
 """
-The 5 Graph Nodes for the RAG StateGraph workflow:
+The 6 Graph Nodes for the RAG StateGraph workflow:
 
 1. manage_history_node — summarizes older turns if history > SUMMARY_TRIGGER
 2. retrieve_node — Stage 1 vector search (k=15) + SQLite parent fetch + Stage 2 CrossEncoder reranking (top 5)
-3. decide_node — evaluates top CrossEncoder rerank_score against RERANK_THRESHOLD (-2.0)
+3. decide_node — 3-way decision gate (synthesize >= 0.0, clarify -2.0 to 0.0, fallback < -2.0)
 4. synthesize_node — async LLM call with top re-ranked parent context
-5. fallback_node — deterministic response if relevance < RERANK_THRESHOLD (FR-10, zero hallucination)
+5. clarify_node — async LLM call asking user for clarification on ambiguous partial matches
+6. fallback_node — deterministic response if score < RERANK_CLARIFY_THRESHOLD (FR-10, zero hallucination)
 
 CRITICAL LANGGRAPH RULE:
 Nodes MUST return partial dicts of updated fields ONLY. Never return full state.
@@ -21,6 +22,13 @@ from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+CLARIFY_PROMPT = (
+    "You are AI Nexus assistant. The user's query partially matched some documents, "
+    "but the evidence is ambiguous or incomplete to give a definitive answer.\n"
+    "Look at the partially matched document snippets below and politely ask the user "
+    "a clarifying question so they can refine their question."
+)
+
 
 # ── Node 1: Manage conversation history length ──────────────────────
 
@@ -28,7 +36,7 @@ async def manage_history_node(state):
     """Compress older conversation turns into a summary when history exceeds SUMMARY_TRIGGER."""
     messages = state.get("messages", [])
     if len(messages) <= settings.SUMMARY_TRIGGER:
-        return {}  # No change needed, return empty partial dict
+        return {}
 
     older = messages[:-settings.KEEP_RECENT]
     recent = messages[-settings.KEEP_RECENT:]
@@ -54,7 +62,6 @@ def retrieve_node(state):
     query = state.get("query", "")
     vs = get_vectorstore()
 
-    # Stage 1: Similarity search with cosine relevance scores (k=15 widened pool)
     results = vs.similarity_search_with_relevance_scores(
         query,
         k=settings.RETRIEVAL_K,
@@ -65,7 +72,6 @@ def retrieve_node(state):
         logger.info(f"No documents retrieved for query: '{query[:40]}...' (user: {user_id})")
         return {"retrieved_docs": []}
 
-    # Deduplicate candidate chunks by parent_id, keeping highest cosine score
     best_by_parent = {}
     for doc, score in results:
         pid = doc.metadata.get("parent_id")
@@ -86,11 +92,9 @@ def retrieve_node(state):
                 "is_raw": False,
             }
 
-    # Fetch full parent block texts from SQLite parent store
     text_parent_ids = [pid for pid, info in best_by_parent.items() if not info["is_raw"]]
     parents = get_parents(text_parent_ids) if text_parent_ids else {}
 
-    # Assemble candidate list for CrossEncoder reranking
     candidates = []
     for pid, info in best_by_parent.items():
         if info["is_raw"]:
@@ -106,26 +110,33 @@ def retrieve_node(state):
                 "source": info["source"],
             })
 
-    # Stage 2: Local CrossEncoder re-ranking down to top 5
     reranked_docs = rerank_parents(query, candidates, top_n=settings.TOP_N_SYNTHESIS)
-    
     return {"retrieved_docs": reranked_docs}
 
 
-# ── Node 3: Decide relevance (Decision Gate) ─────────────────────────
+# ── Node 3: 3-Way Decision Gate ──────────────────────────────────────
 
 def decide_node(state):
-    """Evaluate top CrossEncoder rerank_score against RERANK_THRESHOLD."""
+    """3-Way Decision Gate based on CrossEncoder logit scores:
+    - top_score >= RERANK_PASS_THRESHOLD (>= 0.0) -> "synthesize"
+    - RERANK_CLARIFY_THRESHOLD (-2.0) <= top_score < RERANK_PASS_THRESHOLD (0.0) -> "clarify"
+    - top_score < RERANK_CLARIFY_THRESHOLD (< -2.0) -> "fallback"
+    """
     docs = state.get("retrieved_docs", [])
     if not docs:
-        return {"relevance_ok": False}
+        return {"relevance_action": "fallback"}
 
-    # Extract highest CrossEncoder score (logit scale)
     top_score = max(d.get("rerank_score", d.get("score", float("-inf"))) for d in docs)
-    is_relevant = top_score >= settings.RERANK_THRESHOLD
 
-    logger.info(f"Decide gate: top_rerank_score={top_score:.4f}, threshold={settings.RERANK_THRESHOLD}, relevance_ok={is_relevant}")
-    return {"relevance_ok": is_relevant}
+    if top_score >= settings.RERANK_PASS_THRESHOLD:
+        action = "synthesize"
+    elif top_score >= settings.RERANK_CLARIFY_THRESHOLD:
+        action = "clarify"
+    else:
+        action = "fallback"
+
+    logger.info(f"3-Way Decide Gate: top_score={top_score:.4f} -> action='{action}'")
+    return {"relevance_action": action}
 
 
 # ── Node 4: Synthesize answer from context ──────────────────────────
@@ -147,10 +158,32 @@ async def synthesize_node(state):
     return {"answer": answer}
 
 
-# ── Node 5: Deterministic Fallback (FR-10) ───────────────────────────
+# ── Node 5: Clarify question for ambiguous matches ───────────────────
+
+async def clarify_node(state):
+    """Async call asking user to clarify their query based on partial document matches."""
+    docs = state.get("retrieved_docs", [])
+    partial_snippets = "\n".join(f"- {d['source']}: {d['content'][:150]}..." for d in docs[:3])
+
+    prompt = (
+        f"{CLARIFY_PROMPT}\n\n"
+        f"Partial Match Snippets:\n{partial_snippets}\n\n"
+        f"User Query: {state['query']}"
+    )
+
+    answer = await call_openrouter(
+        query=prompt,
+        context="",
+        history=[],
+        model=state.get("model"),
+    )
+    return {"answer": answer}
+
+
+# ── Node 6: Deterministic Fallback (FR-10) ───────────────────────────
 
 def fallback_node(state):
-    """Deterministic response when rerank score is below threshold — zero hallucination risk."""
+    """Deterministic response when score is below clarify threshold — zero hallucination risk."""
     return {
         "answer": (
             "I don't have any relevant documents in your library to answer that question. "

@@ -46,9 +46,10 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./data/uploads"
     IMAGE_DIR: str = "./data/images"
 
-    # ── Retrieval & Reranking ──
-    RELEVANCE_THRESHOLD: float = 0.40
-    RERANK_THRESHOLD: float = -2.0  # CrossEncoder logit threshold for decide_node
+    # ── Retrieval & 3-Way Decision Thresholds ──
+    # Reranker Logits: Pass (>= 0.0), Clarify (-2.0 to 0.0), Fallback (< -2.0)
+    RERANK_PASS_THRESHOLD: float = 0.0
+    RERANK_CLARIFY_THRESHOLD: float = -2.0
     RETRIEVAL_K: int = 15          # Widened Stage 1 vector search candidates
     TOP_N_SYNTHESIS: int = 5       # Final re-ranked top parents sent to LLM
 

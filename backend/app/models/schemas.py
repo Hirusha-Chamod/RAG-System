@@ -84,6 +84,7 @@ class ChatResponse(BaseModel):
     sources: list[SourceDoc]
     session_id: str
     relevance_ok: bool
+    relevance_action: Literal["synthesize", "clarify", "fallback"] = "fallback"
     model_used: str
 
 
