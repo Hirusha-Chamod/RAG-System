@@ -1,5 +1,5 @@
 """
-Async OpenRouter client for RAG synthesis and conversation history summarization.
+Async OpenRouter client for RAG synthesis, history summarization, and memory fact extraction.
 """
 
 import httpx
@@ -24,21 +24,25 @@ SUMMARY_SYSTEM_PROMPT = (
     "Be brief and objective."
 )
 
+EXTRACTION_SYSTEM_PROMPT = (
+    "Inspect the conversation snippet below. If the user explicitly mentions a durable, "
+    "long-term personal fact, background, or preference (e.g. 'I am a lawyer', 'I prefer Python', "
+    "'I work on Project X'), extract it as a single concise fact sentence.\n"
+    "If there is NO durable fact worth remembering long-term, output EXACTLY: NOTHING_WORTH_REMEMBERING"
+)
+
 
 def _build_messages(query: str, context: str, history: list) -> list[dict]:
     """Format history, system prompt, context, and query for OpenRouter API."""
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    # Format previous turns
     for msg in history:
         if hasattr(msg, "content"):
             role = "assistant" if getattr(msg, "type", "") in ("ai", "assistant") else "user"
-            # Skip initial system messages if present
             if getattr(msg, "type", "") == "system":
                 continue
             messages.append({"role": role, "content": msg.content})
 
-    # Add grounding context + user query
     user_prompt = f"Context Documents:\n{context}\n\nQuestion: {query}" if context else query
     messages.append({"role": "user", "content": user_prompt})
 
@@ -101,3 +105,35 @@ async def call_openrouter_summary(messages: list) -> str:
     except Exception as e:
         logger.error(f"Summary generation failed: {e}")
         return "Conversation history summary unavailable."
+
+
+async def call_openrouter_extract_memory(messages: list) -> str | None:
+    """Extract a durable long-term fact from conversation snippet using summary model."""
+    conversation_text = "\n".join(
+        f"{'User' if getattr(m, 'type', '') == 'human' else 'Assistant'}: {m.content}"
+        for m in messages if hasattr(m, "content")
+    )
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"},
+                json={
+                    "model": settings.SUMMARY_MODEL,
+                    "messages": [
+                        {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+                        {"role": "user", "content": conversation_text},
+                    ],
+                },
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            extracted = resp.json()["choices"][0]["message"]["content"].strip()
+            if extracted and extracted != "NOTHING_WORTH_REMEMBERING":
+                logger.info(f"Extracted durable memory fact: {extracted}")
+                return extracted
+            return None
+    except Exception as e:
+        logger.error(f"Fact extraction call failed: {e}")
+        return None

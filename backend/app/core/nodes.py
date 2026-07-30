@@ -1,10 +1,10 @@
 """
-The 6 Graph Nodes for the RAG StateGraph workflow:
+The 6 Graph Nodes for the RAG StateGraph workflow with Long-Term Memory Injection:
 
-1. manage_history_node — summarizes older turns if history > SUMMARY_TRIGGER
+1. manage_history_node — injects long-term user memories + summarizes older turns if history > SUMMARY_TRIGGER
 2. retrieve_node — Stage 1 vector search (k=15) + SQLite parent fetch + Stage 2 CrossEncoder reranking (top 5)
 3. decide_node — 3-way decision gate (synthesize >= 0.0, clarify -2.0 to 0.0, fallback < -2.0)
-4. synthesize_node — async LLM call with top re-ranked parent context
+4. synthesize_node — async LLM call with top re-ranked parent context + periodic memory fact extraction
 5. clarify_node — async LLM call asking user for clarification on ambiguous partial matches
 6. fallback_node — deterministic response if score < RERANK_CLARIFY_THRESHOLD (FR-10, zero hallucination)
 
@@ -12,11 +12,17 @@ CRITICAL LANGGRAPH RULE:
 Nodes MUST return partial dicts of updated fields ONLY. Never return full state.
 """
 
+import time
 from langchain_core.messages import SystemMessage
 from app.ingestion.vectorstore import get_vectorstore
 from app.ingestion.parent_store import get_parents
+from app.memory.long_term import get_all_memory, set_memory
 from app.core.reranker import rerank_parents
-from app.core.llm import call_openrouter, call_openrouter_summary
+from app.core.llm import (
+    call_openrouter,
+    call_openrouter_summary,
+    call_openrouter_extract_memory,
+)
 from app.config import settings
 from app.utils.logging import get_logger
 
@@ -29,27 +35,40 @@ CLARIFY_PROMPT = (
     "a clarifying question so they can refine their question."
 )
 
+EXTRACTION_TRIGGER_EVERY_N_TURNS = 5
 
-# ── Node 1: Manage conversation history length ──────────────────────
+
+# ── Node 1: Manage history & Inject Long-Term Memory ──────────────────────
 
 async def manage_history_node(state):
-    """Compress older conversation turns into a summary when history exceeds SUMMARY_TRIGGER."""
-    messages = state.get("messages", [])
-    if len(messages) <= settings.SUMMARY_TRIGGER:
-        return {}
+    """Inject long-term user memories + compress older conversation turns if history > SUMMARY_TRIGGER."""
+    user_id = state.get("user_id")
+    messages = list(state.get("messages", []))
+    updates = {}
 
-    older = messages[:-settings.KEEP_RECENT]
-    recent = messages[-settings.KEEP_RECENT:]
+    # 1. Inject long-term user memories if available and not yet injected
+    memories = get_all_memory(user_id) if user_id else {}
+    if memories and not state.get("_memory_injected"):
+        mem_summary = "; ".join(f"{k}: {v}" for k, v in memories.items())
+        memory_sys_msg = SystemMessage(content=f"User background & context:\n{mem_summary}")
+        messages.insert(0, memory_sys_msg)
+        updates["_memory_injected"] = True
 
-    summary_text = await call_openrouter_summary(older)
-    logger.info(f"Summarized {len(older)} old conversation turns into summary")
+    # 2. History length trimming / summarization
+    if len(messages) > settings.SUMMARY_TRIGGER:
+        older = messages[:-settings.KEEP_RECENT]
+        recent = messages[-settings.KEEP_RECENT:]
+        summary_text = await call_openrouter_summary(older)
+        logger.info(f"Summarized {len(older)} old conversation turns into summary")
 
-    return {
-        "messages": [
+        updates["messages"] = [
             SystemMessage(content=f"Earlier conversation summary:\n{summary_text}"),
             *recent,
         ]
-    }
+    elif updates.get("_memory_injected"):
+        updates["messages"] = messages
+
+    return updates
 
 
 # ── Node 2: Two-Stage Retrieve & Re-Rank ────────────────────────────
@@ -117,11 +136,7 @@ def retrieve_node(state):
 # ── Node 3: 3-Way Decision Gate ──────────────────────────────────────
 
 def decide_node(state):
-    """3-Way Decision Gate based on CrossEncoder logit scores:
-    - top_score >= RERANK_PASS_THRESHOLD (>= 0.0) -> "synthesize"
-    - RERANK_CLARIFY_THRESHOLD (-2.0) <= top_score < RERANK_PASS_THRESHOLD (0.0) -> "clarify"
-    - top_score < RERANK_CLARIFY_THRESHOLD (< -2.0) -> "fallback"
-    """
+    """3-Way Decision Gate based on CrossEncoder logit scores."""
     docs = state.get("retrieved_docs", [])
     if not docs:
         return {"relevance_action": "fallback"}
@@ -139,11 +154,14 @@ def decide_node(state):
     return {"relevance_action": action}
 
 
-# ── Node 4: Synthesize answer from context ──────────────────────────
+# ── Node 4: Synthesize answer from context & Extract Memory ──────────
 
 async def synthesize_node(state):
     """Async call to OpenRouter with top re-ranked parent text context."""
     docs = state.get("retrieved_docs", [])
+    user_id = state.get("user_id")
+    messages = state.get("messages", [])
+
     context = "\n\n---\n\n".join(
         f"[Source: {d['source']}]\n{d['content']}"
         for d in docs
@@ -152,9 +170,17 @@ async def synthesize_node(state):
     answer = await call_openrouter(
         query=state["query"],
         context=context,
-        history=state.get("messages", []),
+        history=messages,
         model=state.get("model"),
     )
+
+    # Periodic long-term memory fact extraction (every 5 turns)
+    if user_id and len(messages) > 0 and len(messages) % EXTRACTION_TRIGGER_EVERY_N_TURNS == 0:
+        recent_snippet = messages[-EXTRACTION_TRIGGER_EVERY_N_TURNS:]
+        extracted_fact = await call_openrouter_extract_memory(recent_snippet)
+        if extracted_fact:
+            set_memory(user_id, key=f"fact_{int(time.time())}", value=extracted_fact)
+
     return {"answer": answer}
 
 
