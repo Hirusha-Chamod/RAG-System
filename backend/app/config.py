@@ -31,10 +31,11 @@ class Settings(BaseSettings):
         "openai/gpt-oss-20b:free": "GPT-OSS 20B (Fastest responses)",
     }
 
-    # ── Embeddings ──
+    # ── Embeddings & Reranking ──
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
     EMBEDDING_MODE: str = "local"  # "local" or "remote"
     HF_API_TOKEN: str = ""
+    RERANK_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # ── Storage Paths ──
     CHROMA_DB_PATH: str = "./data/chroma_db"
@@ -45,9 +46,11 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./data/uploads"
     IMAGE_DIR: str = "./data/images"
 
-    # ── Retrieval ──
+    # ── Retrieval & Reranking ──
     RELEVANCE_THRESHOLD: float = 0.40
-    RETRIEVAL_K: int = 5
+    RERANK_THRESHOLD: float = -2.0  # CrossEncoder logit threshold for decide_node
+    RETRIEVAL_K: int = 15          # Widened Stage 1 vector search candidates
+    TOP_N_SYNTHESIS: int = 5       # Final re-ranked top parents sent to LLM
 
     # ── Memory ──
     SUMMARY_TRIGGER: int = 20
@@ -72,7 +75,6 @@ class Settings(BaseSettings):
         """Create all data directories at startup. Idempotent."""
         for dir_path in [self.CHROMA_DB_PATH, self.UPLOAD_DIR, self.IMAGE_DIR]:
             Path(dir_path).mkdir(parents=True, exist_ok=True)
-        # SQLite files parent dirs
         for file_path in [
             self.PARENT_STORE_PATH,
             self.LONG_TERM_DB_PATH,

@@ -2,10 +2,10 @@
 The 5 Graph Nodes for the RAG StateGraph workflow:
 
 1. manage_history_node — summarizes older turns if history > SUMMARY_TRIGGER
-2. retrieve_node — queries ChromaDB (user_id filter) & fetches parents from SQLite
-3. decide_node — evaluates top cosine score against RELEVANCE_THRESHOLD (0.40)
-4. synthesize_node — async LLM call with retrieved parent context
-5. fallback_node — deterministic response if relevance < 0.40 (FR-10, zero hallucination)
+2. retrieve_node — Stage 1 vector search (k=15) + SQLite parent fetch + Stage 2 CrossEncoder reranking (top 5)
+3. decide_node — evaluates top CrossEncoder rerank_score against RERANK_THRESHOLD (-2.0)
+4. synthesize_node — async LLM call with top re-ranked parent context
+5. fallback_node — deterministic response if relevance < RERANK_THRESHOLD (FR-10, zero hallucination)
 
 CRITICAL LANGGRAPH RULE:
 Nodes MUST return partial dicts of updated fields ONLY. Never return full state.
@@ -14,6 +14,7 @@ Nodes MUST return partial dicts of updated fields ONLY. Never return full state.
 from langchain_core.messages import SystemMessage
 from app.ingestion.vectorstore import get_vectorstore
 from app.ingestion.parent_store import get_parents
+from app.core.reranker import rerank_parents
 from app.core.llm import call_openrouter, call_openrouter_summary
 from app.config import settings
 from app.utils.logging import get_logger
@@ -43,15 +44,17 @@ async def manage_history_node(state):
     }
 
 
-# ── Node 2: Retrieve relevant documents ─────────────────────────────
+# ── Node 2: Two-Stage Retrieve & Re-Rank ────────────────────────────
 
 def retrieve_node(state):
-    """Query ChromaDB with user_id metadata filter, then fetch parent page text from SQLite."""
+    """Stage 1: Widened ChromaDB vector search (k=15, user_id filter).
+    Stage 2: Fetch parent texts from SQLite & re-rank using CrossEncoder down to top_n=5.
+    """
     user_id = state.get("user_id")
     query = state.get("query", "")
     vs = get_vectorstore()
 
-    # Similarity search with cosine relevance scores and user_id filter
+    # Stage 1: Similarity search with cosine relevance scores (k=15 widened pool)
     results = vs.similarity_search_with_relevance_scores(
         query,
         k=settings.RETRIEVAL_K,
@@ -62,12 +65,11 @@ def retrieve_node(state):
         logger.info(f"No documents retrieved for query: '{query[:40]}...' (user: {user_id})")
         return {"retrieved_docs": []}
 
-    # Deduplicate by parent_id, retaining highest score per parent
+    # Deduplicate candidate chunks by parent_id, keeping highest cosine score
     best_by_parent = {}
     for doc, score in results:
         pid = doc.metadata.get("parent_id")
         if pid is None:
-            # Standalone image description or unparented chunk
             doc_key = f"raw_{hash(doc.page_content)}"
             best_by_parent[doc_key] = {
                 "content": doc.page_content,
@@ -84,49 +86,52 @@ def retrieve_node(state):
                 "is_raw": False,
             }
 
-    # Fetch parent (full block) text from SQLite parent store
+    # Fetch full parent block texts from SQLite parent store
     text_parent_ids = [pid for pid, info in best_by_parent.items() if not info["is_raw"]]
     parents = get_parents(text_parent_ids) if text_parent_ids else {}
 
-    # Build final retrieved docs list
-    retrieved_docs = []
+    # Assemble candidate list for CrossEncoder reranking
+    candidates = []
     for pid, info in best_by_parent.items():
         if info["is_raw"]:
-            retrieved_docs.append({
+            candidates.append({
                 "content": info["content"],
                 "score": info["score"],
                 "source": info["source"],
             })
         elif pid in parents:
-            retrieved_docs.append({
+            candidates.append({
                 "content": parents[pid],
                 "score": info["score"],
                 "source": info["source"],
             })
 
-    logger.info(f"Retrieved {len(retrieved_docs)} docs for query '{query[:30]}...' (scores: {[round(d['score'], 4) for d in retrieved_docs]})")
-    return {"retrieved_docs": retrieved_docs}
+    # Stage 2: Local CrossEncoder re-ranking down to top 5
+    reranked_docs = rerank_parents(query, candidates, top_n=settings.TOP_N_SYNTHESIS)
+    
+    return {"retrieved_docs": reranked_docs}
 
 
 # ── Node 3: Decide relevance (Decision Gate) ─────────────────────────
 
 def decide_node(state):
-    """Evaluate if top retrieved cosine score meets RELEVANCE_THRESHOLD."""
+    """Evaluate top CrossEncoder rerank_score against RERANK_THRESHOLD."""
     docs = state.get("retrieved_docs", [])
     if not docs:
         return {"relevance_ok": False}
 
-    top_score = max(d["score"] for d in docs)
-    is_relevant = top_score >= settings.RELEVANCE_THRESHOLD
+    # Extract highest CrossEncoder score (logit scale)
+    top_score = max(d.get("rerank_score", d.get("score", float("-inf"))) for d in docs)
+    is_relevant = top_score >= settings.RERANK_THRESHOLD
 
-    logger.info(f"Decide gate: top_score={top_score:.4f}, threshold={settings.RELEVANCE_THRESHOLD}, relevance_ok={is_relevant}")
+    logger.info(f"Decide gate: top_rerank_score={top_score:.4f}, threshold={settings.RERANK_THRESHOLD}, relevance_ok={is_relevant}")
     return {"relevance_ok": is_relevant}
 
 
 # ── Node 4: Synthesize answer from context ──────────────────────────
 
 async def synthesize_node(state):
-    """Async call to OpenRouter with retrieved parent text to generate grounded response."""
+    """Async call to OpenRouter with top re-ranked parent text context."""
     docs = state.get("retrieved_docs", [])
     context = "\n\n---\n\n".join(
         f"[Source: {d['source']}]\n{d['content']}"
@@ -145,7 +150,7 @@ async def synthesize_node(state):
 # ── Node 5: Deterministic Fallback (FR-10) ───────────────────────────
 
 def fallback_node(state):
-    """Deterministic, helpful response when relevance score is too low — zero hallucination risk."""
+    """Deterministic response when rerank score is below threshold — zero hallucination risk."""
     return {
         "answer": (
             "I don't have any relevant documents in your library to answer that question. "
