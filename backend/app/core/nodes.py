@@ -1,9 +1,9 @@
 """
-The 6 Graph Nodes for the RAG StateGraph workflow with Long-Term Memory Injection:
+The 6 Graph Nodes for the RAG StateGraph workflow with Long-Term Memory & Greeting Detection:
 
 1. manage_history_node — injects long-term user memories + summarizes older turns if history > SUMMARY_TRIGGER
 2. retrieve_node — Stage 1 vector search (k=15) + SQLite parent fetch + Stage 2 CrossEncoder reranking (top 5)
-3. decide_node — 3-way decision gate (synthesize >= 0.0, clarify -2.0 to 0.0, fallback < -2.0)
+3. decide_node — 3-way decision gate with greeting detection (synthesize >= 0.0, clarify -2.0 to 0.0, fallback < -2.0)
 4. synthesize_node — async LLM call with top re-ranked parent context + periodic memory fact extraction
 5. clarify_node — async LLM call asking user for clarification on ambiguous partial matches
 6. fallback_node — deterministic response if score < RERANK_CLARIFY_THRESHOLD (FR-10, zero hallucination)
@@ -13,6 +13,8 @@ Nodes MUST return partial dicts of updated fields ONLY. Never return full state.
 """
 
 import time
+import re
+import warnings
 from langchain_core.messages import SystemMessage
 from app.ingestion.vectorstore import get_vectorstore
 from app.ingestion.parent_store import get_parents
@@ -26,6 +28,9 @@ from app.core.llm import (
 from app.config import settings
 from app.utils.logging import get_logger
 
+# Suppress harmless ChromaDB vector relevance score float warning
+warnings.filterwarnings("ignore", message="Relevance scores must be between 0 and 1")
+
 logger = get_logger(__name__)
 
 CLARIFY_PROMPT = (
@@ -37,6 +42,11 @@ CLARIFY_PROMPT = (
 
 EXTRACTION_TRIGGER_EVERY_N_TURNS = 5
 
+GREETING_PATTERNS = re.compile(
+    r"^\s*(hello|hi|hey|greetings|good\s+(morning|afternoon|evening)|howdy|who\s+are\s+you|what\s+can\s+you\s+do|help|my\s+name\s+is|i\s+am\s+).*",
+    re.IGNORECASE,
+)
+
 
 # ── Node 1: Manage history & Inject Long-Term Memory ──────────────────────
 
@@ -46,7 +56,6 @@ async def manage_history_node(state):
     messages = list(state.get("messages", []))
     updates = {}
 
-    # 1. Inject long-term user memories if available and not yet injected
     memories = get_all_memory(user_id) if user_id else {}
     if memories and not state.get("_memory_injected"):
         mem_summary = "; ".join(f"{k}: {v}" for k, v in memories.items())
@@ -54,7 +63,6 @@ async def manage_history_node(state):
         messages.insert(0, memory_sys_msg)
         updates["_memory_injected"] = True
 
-    # 2. History length trimming / summarization
     if len(messages) > settings.SUMMARY_TRIGGER:
         older = messages[:-settings.KEEP_RECENT]
         recent = messages[-settings.KEEP_RECENT:]
@@ -133,10 +141,16 @@ def retrieve_node(state):
     return {"retrieved_docs": reranked_docs}
 
 
-# ── Node 3: 3-Way Decision Gate ──────────────────────────────────────
+# ── Node 3: 3-Way Decision Gate (with Greeting Detection) ───────────
 
 def decide_node(state):
-    """3-Way Decision Gate based on CrossEncoder logit scores."""
+    """3-Way Decision Gate."""
+    query = state.get("query", "").strip()
+
+    if GREETING_PATTERNS.match(query):
+        logger.info(f"Greeting detected ('{query}') -> routing to synthesize_node")
+        return {"relevance_action": "synthesize"}
+
     docs = state.get("retrieved_docs", [])
     if not docs:
         return {"relevance_action": "fallback"}
@@ -161,11 +175,15 @@ async def synthesize_node(state):
     docs = state.get("retrieved_docs", [])
     user_id = state.get("user_id")
     messages = state.get("messages", [])
+    query = state.get("query", "").strip()
 
-    context = "\n\n---\n\n".join(
-        f"[Source: {d['source']}]\n{d['content']}"
-        for d in docs
-    )
+    if GREETING_PATTERNS.match(query):
+        context = "The user is saying hello, introducing themselves, or asking for assistance. Respond warmly and introduce yourself as AI Nexus RAG Engine assistant."
+    else:
+        context = "\n\n---\n\n".join(
+            f"[Source: {d['source']}]\n{d['content']}"
+            for d in docs
+        )
 
     answer = await call_openrouter(
         query=state["query"],
@@ -174,7 +192,6 @@ async def synthesize_node(state):
         model=state.get("model"),
     )
 
-    # Periodic long-term memory fact extraction (every 5 turns)
     if user_id and len(messages) > 0 and len(messages) % EXTRACTION_TRIGGER_EVERY_N_TURNS == 0:
         recent_snippet = messages[-EXTRACTION_TRIGGER_EVERY_N_TURNS:]
         extracted_fact = await call_openrouter_extract_memory(recent_snippet)

@@ -1,104 +1,146 @@
-import React from 'react';
-import type { User, ModelInfo } from '../types';
+import React, { useState } from 'react';
 
 interface Props {
-  user: User | null;
-  sessionId: string;
-  onSessionChange: (session: string) => void;
+  user: any;
   selectedModel: string;
   onModelChange: (model: string) => void;
-  modelsInfo: ModelInfo | null;
-  onOpenUpload: () => void;
-  onOpenMemory: () => void;
+  modelsInfo: any;
   onOpenAuth: () => void;
   onLogout: () => void;
 }
 
 export const Header: React.FC<Props> = ({
   user,
-  sessionId,
-  onSessionChange,
   selectedModel,
   onModelChange,
   modelsInfo,
-  onOpenUpload,
-  onOpenMemory,
   onOpenAuth,
   onLogout,
 }) => {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  const availableModels = modelsInfo?.models || {
+    'google/gemma-4-31b-it:free': 'Google Gemma 4 31B (Default)',
+    'inclusionai/ling-3.0-flash:free': 'Ling 3.0 Flash (Fast)',
+    'nvidia/nemotron-3-super-120b-a12b:free': 'Nemotron 3 Super (Long context)',
+    'google/gemma-4-26b-a4b-it:free': 'Gemma 4 26B (Lightweight)',
+  };
+
+  const currentShortName = selectedModel.split('/')[1] || selectedModel;
+
   return (
-    <header className="glass-panel" style={{ padding: '12px 24px', margin: '16px 16px 0 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'linear-gradient(135deg, var(--primary), var(--accent-cyan))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '1.1rem', color: '#fff' }}>
-          NX
-        </div>
-        <div>
-          <h1 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0, background: 'linear-gradient(135deg, #fff, #cbd5e1)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            AI Nexus RAG Engine
-          </h1>
-          <span style={{ fontSize: '0.72rem', color: 'var(--accent-cyan)', fontWeight: 600 }}>
-            v0.4.0 • Multimodal & 3-Way Decision Gate
+    <header
+      className="glass-panel"
+      style={{
+        margin: '16px 16px 0 0',
+        padding: '12px 24px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        height: '64px',
+        zIndex: 100,
+        position: 'relative',
+      }}
+    >
+      {/* Sleek Custom Model Selector Dropdown */}
+      <div style={{ position: 'relative' }}>
+        <div
+          onClick={() => setDropdownOpen(!dropdownOpen)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            background: 'rgba(255, 255, 255, 0.05)',
+            border: '1px solid var(--border-color)',
+            padding: '8px 14px',
+            borderRadius: '12px',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+            userSelect: 'none',
+          }}
+        >
+          <span style={{ fontSize: '0.82rem', color: 'var(--text-dim)', fontWeight: 600 }}>🤖 Model:</span>
+          <span style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--accent-cyan)' }}>
+            {currentShortName}
+          </span>
+          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginLeft: '4px' }}>
+            {dropdownOpen ? '▲' : '▼'}
           </span>
         </div>
+
+        {/* Dropdown Menu */}
+        {dropdownOpen && (
+          <div
+            className="glass-panel animate-fade-in"
+            style={{
+              position: 'absolute',
+              top: '48px',
+              left: 0,
+              width: '320px',
+              background: '#0f172a',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+              borderRadius: '12px',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+              padding: '8px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px',
+              zIndex: 200,
+            }}
+          >
+            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-dim)', padding: '6px 8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Select Active OpenRouter LLM
+            </div>
+            {Object.entries(availableModels).map(([modelId, desc]) => {
+              const isSelected = modelId === selectedModel;
+              const shortName = modelId.split('/')[1] || modelId;
+              return (
+                <div
+                  key={modelId}
+                  onClick={() => {
+                    onModelChange(modelId);
+                    setDropdownOpen(false);
+                  }}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    background: isSelected ? 'rgba(99, 102, 241, 0.25)' : 'transparent',
+                    border: isSelected ? '1px solid rgba(99, 102, 241, 0.4)' : '1px solid transparent',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 600, color: isSelected ? '#fff' : 'var(--text-main)' }}>
+                      {shortName}
+                    </span>
+                    {isSelected && <span style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)', fontWeight: 700 }}>Active</span>}
+                  </div>
+                  <div style={{ fontSize: '0.73rem', color: 'var(--text-dim)', lineHeight: '1.3' }}>
+                    {desc as string}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-        {modelsInfo && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Model:</span>
-            <select
-              value={selectedModel}
-              onChange={(e) => onModelChange(e.target.value)}
-              className="input-field"
-              style={{ width: 'auto', padding: '6px 10px', fontSize: '0.8rem' }}
-            >
-              {Object.entries(modelsInfo.models).map(([id, desc]) => (
-                <option key={id} value={id}>
-                  {id.split('/')[1]} ({desc.split('(')[0].trim()})
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Session:</span>
-          <input
-            type="text"
-            className="input-field"
-            value={sessionId}
-            onChange={(e) => onSessionChange(e.target.value)}
-            style={{ width: '120px', padding: '6px 10px', fontSize: '0.8rem' }}
-          />
-        </div>
-
-        {user && (
-          <>
-            <button className="btn btn-secondary" onClick={onOpenUpload} style={{ fontSize: '0.8rem', padding: '7px 12px' }}>
-              📁 Ingest Files
-            </button>
-            <button className="btn btn-secondary" onClick={onOpenMemory} style={{ fontSize: '0.8rem', padding: '7px 12px' }}>
-              🧠 Memory
-            </button>
-          </>
-        )}
-
-        {user ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingLeft: '8px', borderLeft: '1px solid var(--border-color)' }}>
-            <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'var(--accent-purple)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 700 }}>
-              {user.username[0].toUpperCase()}
-            </div>
-            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-main)' }}>
-              {user.username}
-            </span>
-            <button className="btn btn-danger" onClick={onLogout} style={{ fontSize: '0.75rem', padding: '4px 8px', marginLeft: '4px' }}>
-              Logout
-            </button>
-          </div>
-        ) : (
-          <button className="btn btn-primary" onClick={onOpenAuth} style={{ fontSize: '0.85rem', padding: '7px 14px' }}>
-            Sign In
+      {/* User Auth Controls */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {!user ? (
+          <button onClick={onOpenAuth} className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '0.85rem' }}>
+            Sign In / Register
           </button>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+              Logged in as <strong style={{ color: '#fff' }}>{user.username}</strong>
+            </div>
+            <button onClick={onLogout} className="btn btn-secondary" style={{ padding: '6px 14px', fontSize: '0.8rem' }}>
+              Sign Out
+            </button>
+          </div>
         )}
       </div>
     </header>

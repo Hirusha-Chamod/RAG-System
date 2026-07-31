@@ -32,6 +32,7 @@ def test_chat_fallback_when_no_docs():
         chat_req = {
             "message": "What is the secret passphrase for quantum core?",
             "session_id": "session_fallback_1",
+            "model": "google/gemma-4-31b-it:free",
         }
         resp = client.post("/chat", json=chat_req, headers=headers)
         assert resp.status_code == 200

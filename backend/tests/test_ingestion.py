@@ -17,7 +17,6 @@ def _get_auth_headers(client: TestClient, username: str = "ingest_user") -> dict
     if resp.status_code == 201:
         token = resp.json()["access_token"]
     else:
-        # If user exists, log in
         login_resp = client.post(
             "/auth/login",
             json={"username_or_email": username, "password": "Password123!"},
@@ -38,8 +37,8 @@ def test_list_models():
         response = client.get("/models")
         assert response.status_code == 200
         data = response.json()
-        assert "tencent/hy3:free" in data["models"]
-        assert data["default_model"] == "tencent/hy3:free"
+        assert "google/gemma-4-31b-it:free" in data["models"]
+        assert data["default_model"] == "google/gemma-4-31b-it:free"
 
 
 def test_ingest_unauthenticated():

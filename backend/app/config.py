@@ -17,25 +17,25 @@ class Settings(BaseSettings):
 
     # ── OpenRouter (LLM) ──
     OPENROUTER_API_KEY: str = ""
-    LLM_MODEL: str = "tencent/hy3:free"
-    VISION_LLM_MODEL: str = "nvidia/nemotron-nano-12b-v2-vl:free"
-    SUMMARY_MODEL: str = "nvidia/nemotron-nano-9b-v2:free"
-    DEFAULT_MODEL: str = "tencent/hy3:free"
+    LLM_MODEL: str = "google/gemma-4-31b-it:free"
+    VISION_LLM_MODEL: str = "google/gemma-4-31b-it:free"
+    SUMMARY_MODEL: str = "inclusionai/ling-3.0-flash:free"
+    DEFAULT_MODEL: str = "google/gemma-4-31b-it:free"
     APP_URL: str = "http://localhost:8000"
 
     # Server-side whitelisted models for client selection (/models endpoint)
     ALLOWED_MODELS: dict[str, str] = {
-        "tencent/hy3:free": "Tencent Hy3 (Balanced, built for grounded/anti-hallucination answers)",
-        "google/gemma-4-31b-it:free": "Gemma 4 31B (Strong document understanding)",
-        "nvidia/nemotron-3-super-120b-a12b:free": "Nemotron 3 Super (Best for very large documents, 1M context)",
-        "openai/gpt-oss-20b:free": "GPT-OSS 20B (Fastest responses)",
+        "google/gemma-4-31b-it:free": "Google Gemma 4 31B (Strong document context & reasoning)",
+        "inclusionai/ling-3.0-flash:free": "Ling 3.0 Flash (Ultra-fast response generation)",
+        "nvidia/nemotron-3-super-120b-a12b:free": "Nemotron 3 Super (Best for complex, long-context RAG)",
+        "google/gemma-4-26b-a4b-it:free": "Gemma 4 26B (Fast & lightweight document understanding)",
     }
 
     # ── Embeddings & Reranking ──
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
     EMBEDDING_MODE: str = "local"  # "local" or "remote"
     HF_API_TOKEN: str = ""
-    RERANK_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    RERANK_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-2-v2"
 
     # ── Storage Paths ──
     CHROMA_DB_PATH: str = "./data/chroma_db"
@@ -46,8 +46,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./data/uploads"
     IMAGE_DIR: str = "./data/images"
 
-    # ── Retrieval & 3-Way Decision Thresholds ──
-    # Reranker Logits: Pass (>= 0.0), Clarify (-2.0 to 0.0), Fallback (< -2.0)
+    # ── Retrieval & 3-Way Gate Thresholds ──
     RERANK_PASS_THRESHOLD: float = 0.0
     RERANK_CLARIFY_THRESHOLD: float = -2.0
     RETRIEVAL_K: int = 15          # Widened Stage 1 vector search candidates

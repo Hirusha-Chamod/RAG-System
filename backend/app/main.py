@@ -18,6 +18,8 @@ from app.auth.users_db import init_db as init_users_db
 from app.ingestion.parent_store import init_db as init_parent_store
 from app.ingestion.image_cache import init_db as init_image_cache
 from app.memory.long_term import init_db as init_long_term_memory
+from app.memory.chat_history_db import init_db as init_chat_history_db
+from app.core.reranker import get_reranker
 from app.core.graph import build_graph
 from app.api.routes_auth import router as auth_router
 from app.api.routes_ingest import router as ingest_router
@@ -51,6 +53,10 @@ async def lifespan(app: FastAPI):
     init_parent_store()
     init_image_cache()
     init_long_term_memory()
+    init_chat_history_db()
+
+    # Pre-warm CrossEncoder reranker model at startup
+    get_reranker()
 
     # Compile the LangGraph workflow once at startup and store on app.state
     app.state.graph = build_graph()
@@ -85,7 +91,7 @@ app.add_middleware(
 # ── Mount routers ──
 app.include_router(auth_router)
 app.include_router(ingest_router, tags=["Ingestion"])
-app.include_router(chat_router, tags=["Chat"])
+app.include_router(chat_router)
 app.include_router(retrieve_router, tags=["Retrieval"])
 app.include_router(memory_router)
 

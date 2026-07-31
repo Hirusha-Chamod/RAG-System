@@ -9,3 +9,16 @@ Thumbs.db
 *.ntvs*
 *.njsproj
 *.sln
+
+# Data & Databases (Private user chat & document data)
+backend/data/
+backend/data/*
+*.sqlite
+*.sqlite3
+*.db
+backend/.env
+
+# Node & Dependencies
+node_modules/
+dist/
+.cache/

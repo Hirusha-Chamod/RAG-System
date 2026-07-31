@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import type { ChatMessage } from '../types';
 
 interface Props {
@@ -38,7 +39,7 @@ export const MessageBubble: React.FC<Props> = ({ message }) => {
       </div>
 
       <div
-        className="glass-panel"
+        className="glass-panel markdown-content"
         style={{
           padding: '14px 18px',
           borderRadius: isUser ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
@@ -49,14 +50,17 @@ export const MessageBubble: React.FC<Props> = ({ message }) => {
             ? '1px solid rgba(99, 102, 241, 0.4)'
             : '1px solid var(--border-color)',
           color: 'var(--text-main)',
-          fontSize: '0.95rem',
-          lineHeight: '1.5',
-          whiteSpace: 'pre-wrap',
+          fontSize: '0.92rem',
+          lineHeight: '1.6',
           wordBreak: 'break-word',
           boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
         }}
       >
-        {message.text}
+        {isUser ? (
+          <div style={{ whiteSpace: 'pre-wrap' }}>{message.text}</div>
+        ) : (
+          <ReactMarkdown>{message.text}</ReactMarkdown>
+        )}
       </div>
 
       {!isUser && message.sources && message.sources.length > 0 && (

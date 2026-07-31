@@ -1,18 +1,20 @@
 """
-Multipart file upload ingestion endpoint: POST /ingest
+Multipart file upload ingestion & Document Management endpoints:
+- POST /ingest — Upload and chunk documents
+- GET /ingest/documents — List uploaded files for user
+- DELETE /ingest/documents — Wipe an ingested document from ChromaDB & SQLite
 
 Secured with Depends(get_current_user) JWT Bearer authentication.
-User ID is securely extracted from token (cannot be spoofed by client).
 """
 
 import os
 import uuid
-from fastapi import APIRouter, UploadFile, File, Depends
+from fastapi import APIRouter, UploadFile, File, Depends, Query, HTTPException
 from app.ingestion.loaders import load_file, SUPPORTED_EXTENSIONS
 from app.ingestion.image_extraction import extract_images_pdf, extract_images_from_zip
 from app.ingestion.image_describer import describe_image
 from app.ingestion.chunking import split_into_parents_and_children
-from app.ingestion.parent_store import save_parent
+from app.ingestion.parent_store import save_parent, get_user_documents, delete_user_document
 from app.ingestion.vectorstore import get_vectorstore
 from app.models.schemas import IngestResponse, IngestFileResult
 from app.api.deps import get_current_user
@@ -45,6 +47,42 @@ async def ingest_files(
         total_chunks=total_chunks,
         total_images=total_images,
     )
+
+
+@router.get("/ingest/documents")
+async def list_documents(current_user: dict = Depends(get_current_user)):
+    """Retrieve list of ingested documents for the authenticated user."""
+    user_id = current_user["user_id"]
+    docs = get_user_documents(user_id)
+    return {"user_id": user_id, "documents": docs}
+
+
+@router.delete("/ingest/documents")
+async def delete_document(
+    source: str = Query(..., description="Source filename or filepath to delete"),
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete a document from parent store and ChromaDB vector store for the user."""
+    user_id = current_user["user_id"]
+
+    # 1. Delete parent records from SQLite
+    deleted_parents = delete_user_document(user_id, source)
+
+    # 2. Delete matching vector chunks from ChromaDB
+    vs = get_vectorstore()
+    try:
+        if hasattr(vs, "_collection") and vs._collection is not None:
+            vs._collection.delete(where={"$and": [{"user_id": user_id}, {"source": source}]})
+    except Exception as e:
+        logger.warning(f"ChromaDB delete exception for {source}: {e}")
+
+    logger.info(f"Deleted document '{source}' for user '{user_id}' ({deleted_parents} parents removed)")
+    return {
+        "user_id": user_id,
+        "source": source,
+        "status": "deleted",
+        "deleted_parents": deleted_parents,
+    }
 
 
 async def _process_single_file(upload_file: UploadFile, user_id: str) -> IngestFileResult:
@@ -120,7 +158,6 @@ async def _process_single_file(upload_file: UploadFile, user_id: str) -> IngestF
         for doc_index, doc in enumerate(docs):
             page_text = doc.page_content or ""
 
-            # Check for PDF images on this page
             page_descriptions = []
             if ext == ".pdf" and doc_index in pdf_images_by_page:
                 for img_bytes in pdf_images_by_page[doc_index]:
@@ -128,23 +165,20 @@ async def _process_single_file(upload_file: UploadFile, user_id: str) -> IngestF
                         page_descriptions.append(desc)
                         images_processed += 1
 
-            # Append image descriptions to document text before splitting
             all_descriptions = page_descriptions if ext == ".pdf" else zip_image_descriptions
             if all_descriptions:
                 desc_text = "\n\n" + "\n".join(f"[Image Content: {d}]" for d in all_descriptions)
                 doc.page_content = page_text + desc_text
 
-            # 6. Split into parents (~2000 ch) and children (~400 ch)
             parents, children = split_into_parents_and_children(doc, file_id, doc_index)
 
-            # 7. Persist parents to SQLite & children to ChromaDB
             for p in parents:
-                save_parent(p["parent_id"], p["content"], p["source"], user_id)
+                save_parent(p["parent_id"], p["content"], filename, user_id)
 
             if children:
                 vs.add_texts(
                     texts=[c["content"] for c in children],
-                    metadatas=[{**c["metadata"], "user_id": user_id} for c in children],
+                    metadatas=[{**c["metadata"], "source": filename, "user_id": user_id} for c in children],
                 )
                 chunks_created += len(children)
 

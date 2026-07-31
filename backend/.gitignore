@@ -1,11 +1,18 @@
-# Data (local-only, never committed)
+# Data & Databases (local-only, private user data — never committed to git)
+data/
+data/*
 data/uploads/
 data/chroma_db/
 data/images/
 data/*.sqlite
+*.sqlite
+*.sqlite3
+*.db
 
-# Environment
+# Environment & Secrets
 .env
+.env.*
+!.env.example
 
 # Python
 __pycache__/
@@ -19,5 +26,5 @@ build/
 dist/
 *.whl
 
-# HuggingFace model cache
+# Model Caches
 .cache/

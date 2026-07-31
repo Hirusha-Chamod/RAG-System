@@ -52,6 +52,23 @@ export async function uploadFiles(files: FileList | File[], token: string): Prom
   return resp.json();
 }
 
+export async function fetchUserDocuments(token: string) {
+  const resp = await fetch(`${API_BASE}/ingest/documents`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) throw new Error('Failed to fetch documents');
+  return resp.json();
+}
+
+export async function deleteUserDocument(source: string, token: string) {
+  const resp = await fetch(`${API_BASE}/ingest/documents?source=${encodeURIComponent(source)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) throw new Error('Failed to delete document');
+  return resp.json();
+}
+
 export async function sendChatMessage(
   message: string,
   sessionId: string,
@@ -74,6 +91,22 @@ export async function sendChatMessage(
     const err = await resp.json();
     throw new Error(err.detail || 'Chat request failed');
   }
+  return resp.json();
+}
+
+export async function fetchChatHistory(sessionId: string, token: string) {
+  const resp = await fetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(sessionId)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) throw new Error('Failed to fetch chat history');
+  return resp.json();
+}
+
+export async function fetchUserSessions(token: string) {
+  const resp = await fetch(`${API_BASE}/chat/sessions`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) throw new Error('Failed to fetch user sessions');
   return resp.json();
 }
 
