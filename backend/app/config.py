@@ -43,8 +43,12 @@ class Settings(BaseSettings):
     LONG_TERM_DB_PATH: str = "./data/memory.sqlite"
     IMAGE_CACHE_DB_PATH: str = "./data/image_cache.sqlite"
     USERS_DB_PATH: str = "./data/users.sqlite"
+    CHAT_HISTORY_DB_PATH: str = "./data/chat_history.sqlite"
     UPLOAD_DIR: str = "./data/uploads"
     IMAGE_DIR: str = "./data/images"
+
+    # ── Ingestion & Upload Limits ──
+    MAX_UPLOAD_SIZE_MB: int = 50
 
     # ── Retrieval & 3-Way Gate Thresholds ──
     RERANK_PASS_THRESHOLD: float = 0.0
@@ -80,16 +84,17 @@ class Settings(BaseSettings):
             self.LONG_TERM_DB_PATH,
             self.IMAGE_CACHE_DB_PATH,
             self.USERS_DB_PATH,
+            self.CHAT_HISTORY_DB_PATH,
         ]:
             Path(file_path).parent.mkdir(parents=True, exist_ok=True)
 
     def setup_langsmith_env(self) -> None:
         """Push LangSmith settings into os.environ."""
         if self.LANGSMITH_API_KEY:
-            os.environ.setdefault("LANGSMITH_TRACING", self.LANGSMITH_TRACING)
-            os.environ.setdefault("LANGSMITH_API_KEY", self.LANGSMITH_API_KEY)
-            os.environ.setdefault("LANGSMITH_PROJECT", self.LANGSMITH_PROJECT)
-            os.environ.setdefault("LANGSMITH_ENDPOINT", self.LANGSMITH_ENDPOINT)
+            os.environ["LANGSMITH_TRACING"] = str(self.LANGSMITH_TRACING).lower()
+            os.environ["LANGSMITH_API_KEY"] = str(self.LANGSMITH_API_KEY).strip()
+            os.environ["LANGSMITH_PROJECT"] = str(self.LANGSMITH_PROJECT).strip()
+            os.environ["LANGSMITH_ENDPOINT"] = str(self.LANGSMITH_ENDPOINT).strip()
 
 
 # Singleton

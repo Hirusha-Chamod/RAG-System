@@ -2,26 +2,20 @@
 SQLite User Store (`users.sqlite`).
 
 Stores user accounts: user_id, username, email, hashed_password, created_at.
-Uses WAL mode for non-blocking concurrent reads/writes.
+Uses thread-local connection manager with WAL mode & busy_timeout.
 """
 
-import sqlite3
 import time
+from app.db import get_db_connection
 from app.config import settings
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-def _conn():
-    conn = sqlite3.connect(settings.USERS_DB_PATH)
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
-
-
 def init_db():
     """Initialize users table."""
-    with _conn() as c:
+    with get_db_connection(settings.USERS_DB_PATH) as c:
         c.execute("""CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY,
             username TEXT UNIQUE,
@@ -35,7 +29,7 @@ def init_db():
 def create_user(user_id: str, username: str, email: str, hashed_password: str) -> dict:
     """Create a new user account."""
     created_at = time.time()
-    with _conn() as c:
+    with get_db_connection(settings.USERS_DB_PATH) as c:
         c.execute(
             "INSERT INTO users VALUES (?,?,?,?,?)",
             (user_id, username.lower(), email.lower(), hashed_password, created_at),
@@ -52,7 +46,7 @@ def create_user(user_id: str, username: str, email: str, hashed_password: str) -
 def get_user_by_username_or_email(identifier: str) -> dict | None:
     """Find a user by username OR email."""
     ident = identifier.lower()
-    with _conn() as c:
+    with get_db_connection(settings.USERS_DB_PATH) as c:
         row = c.execute(
             "SELECT user_id, username, email, hashed_password, created_at FROM users WHERE username=? OR email=?",
             (ident, ident),
@@ -70,7 +64,7 @@ def get_user_by_username_or_email(identifier: str) -> dict | None:
 
 def get_user_by_id(user_id: str) -> dict | None:
     """Find a user by user_id."""
-    with _conn() as c:
+    with get_db_connection(settings.USERS_DB_PATH) as c:
         row = c.execute(
             "SELECT user_id, username, email, hashed_password, created_at FROM users WHERE user_id=?",
             (user_id,),

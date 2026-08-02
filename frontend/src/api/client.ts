@@ -94,6 +94,76 @@ export async function sendChatMessage(
   return resp.json();
 }
 
+export async function sendChatMessageStream(
+  message: string,
+  sessionId: string,
+  model: string,
+  token: string,
+  onToken: (text: string) => void,
+  onComplete: (metadata: any) => void
+) {
+  const resp = await fetch(`${API_BASE}/chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      message,
+      session_id: sessionId,
+      model,
+    }),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json();
+    throw new Error(err.detail || 'Chat streaming request failed');
+  }
+
+  const reader = resp.body?.getReader();
+  if (!reader) throw new Error('Failed to readable stream reader');
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const jsonStr = line.slice(6).trim();
+        if (!jsonStr) continue;
+        try {
+          const payload = JSON.parse(jsonStr);
+          if (payload.token) {
+            onToken(payload.token);
+          } else if (payload.type === 'metadata') {
+            onComplete(payload);
+          }
+        } catch {
+          // pass on partial parse errors
+        }
+      }
+    }
+  }
+
+  if (buffer.startsWith('data: ')) {
+    const jsonStr = buffer.slice(6).trim();
+    if (jsonStr) {
+      try {
+        const payload = JSON.parse(jsonStr);
+        if (payload.token) onToken(payload.token);
+        else if (payload.type === 'metadata') onComplete(payload);
+      } catch {}
+    }
+  }
+}
+
 export async function fetchChatHistory(sessionId: string, token: string) {
   const resp = await fetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(sessionId)}`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -107,6 +177,15 @@ export async function fetchUserSessions(token: string) {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!resp.ok) throw new Error('Failed to fetch user sessions');
+  return resp.json();
+}
+
+export async function deleteSession(sessionId: string, token: string) {
+  const resp = await fetch(`${API_BASE}/chat/sessions?session_id=${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) throw new Error('Failed to delete session');
   return resp.json();
 }
 

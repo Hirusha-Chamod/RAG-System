@@ -2,27 +2,20 @@
 SQLite Long-Term User Memory Store (`memory.sqlite`).
 
 Stores user-specific facts, background, and preferences across sessions keyed by user_id.
-Uses WAL mode for non-blocking concurrent operations.
+Uses thread-local connection manager with WAL mode & busy_timeout.
 """
 
-import sqlite3
-import json
 import time
+from app.db import get_db_connection
 from app.config import settings
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-def _conn():
-    conn = sqlite3.connect(settings.LONG_TERM_DB_PATH)
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
-
-
 def init_db():
     """Initialize long-term user_memory SQLite table."""
-    with _conn() as c:
+    with get_db_connection(settings.LONG_TERM_DB_PATH) as c:
         c.execute("""CREATE TABLE IF NOT EXISTS user_memory (
             user_id TEXT,
             key TEXT,
@@ -35,7 +28,7 @@ def init_db():
 
 def set_memory(user_id: str, key: str, value: str):
     """Store or update a long-term memory entry for a user."""
-    with _conn() as c:
+    with get_db_connection(settings.LONG_TERM_DB_PATH) as c:
         c.execute(
             "REPLACE INTO user_memory VALUES (?,?,?,?)",
             (user_id, key, value, time.time()),
@@ -45,7 +38,7 @@ def set_memory(user_id: str, key: str, value: str):
 
 def get_all_memory(user_id: str) -> dict[str, str]:
     """Retrieve all memory entries for a user as {key: value} dict."""
-    with _conn() as c:
+    with get_db_connection(settings.LONG_TERM_DB_PATH) as c:
         rows = c.execute(
             "SELECT key, value FROM user_memory WHERE user_id=? ORDER BY updated_at DESC",
             (user_id,),
@@ -55,13 +48,13 @@ def get_all_memory(user_id: str) -> dict[str, str]:
 
 def delete_memory_key(user_id: str, key: str):
     """Delete a specific memory key for a user."""
-    with _conn() as c:
+    with get_db_connection(settings.LONG_TERM_DB_PATH) as c:
         c.execute("DELETE FROM user_memory WHERE user_id=? AND key=?", (user_id, key))
     logger.info(f"Memory key '{key}' deleted for user={user_id}")
 
 
 def delete_all_memory(user_id: str):
     """Clear all long-term memory entries for a user."""
-    with _conn() as c:
+    with get_db_connection(settings.LONG_TERM_DB_PATH) as c:
         c.execute("DELETE FROM user_memory WHERE user_id=?", (user_id,))
     logger.info(f"All long-term memory cleared for user={user_id}")

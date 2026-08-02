@@ -49,7 +49,7 @@ export const Header: React.FC<Props> = ({
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '10px',
+            gap: '8px',
             background: 'rgba(255, 255, 255, 0.05)',
             border: '1px solid var(--border-color)',
             padding: '8px 14px',
@@ -59,13 +59,25 @@ export const Header: React.FC<Props> = ({
             userSelect: 'none',
           }}
         >
-          <span style={{ fontSize: '0.82rem', color: 'var(--text-dim)', fontWeight: 600 }}>🤖 Model:</span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+            <rect x="9" y="9" width="6" height="6"></rect>
+            <line x1="9" y1="1" x2="9" y2="4"></line>
+            <line x1="15" y1="1" x2="15" y2="4"></line>
+            <line x1="9" y1="20" x2="9" y2="23"></line>
+            <line x1="15" y1="20" x2="15" y2="23"></line>
+            <line x1="20" y1="9" x2="23" y2="9"></line>
+            <line x1="20" y1="15" x2="23" y2="15"></line>
+            <line x1="1" y1="9" x2="4" y2="9"></line>
+            <line x1="1" y1="15" x2="4" y2="15"></line>
+          </svg>
+          <span style={{ fontSize: '0.82rem', color: 'var(--text-dim)', fontWeight: 600 }}>Model:</span>
           <span style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--accent-cyan)' }}>
             {currentShortName}
           </span>
-          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginLeft: '4px' }}>
-            {dropdownOpen ? '▲' : '▼'}
-          </span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: '4px', transform: dropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }}>
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
         </div>
 
         {/* Dropdown Menu */}

@@ -38,7 +38,7 @@ def test_chat_fallback_when_no_docs():
         assert resp.status_code == 200
         data = resp.json()
         assert data["relevance_action"] == "fallback"
-        assert "don't have any relevant documents" in data["answer"]
+        assert "couldn't find relevant information" in data["answer"]
 
 
 def test_retrieve_unauthenticated():

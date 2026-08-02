@@ -18,6 +18,7 @@ from app.auth.users_db import (
     get_user_by_username_or_email,
 )
 from app.auth.security import hash_password, verify_password, create_access_token
+from app.auth.rate_limit import check_rate_limit
 from app.api.deps import get_current_user
 from app.utils.logging import get_logger
 
@@ -28,6 +29,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def signup(request: UserSignupRequest):
     """Register a new user account and return a JWT access token."""
+    check_rate_limit(request.username)
     # Check if username or email already exists
     if get_user_by_username_or_email(request.username):
         raise HTTPException(
@@ -58,6 +60,7 @@ async def signup(request: UserSignupRequest):
 @router.post("/login", response_model=TokenResponse)
 async def login(request: UserLoginRequest):
     """Authenticate user credentials and return a JWT access token."""
+    check_rate_limit(request.username_or_email)
     user = get_user_by_username_or_email(request.username_or_email)
     if not user or not verify_password(request.password, user["hashed_password"]):
         raise HTTPException(

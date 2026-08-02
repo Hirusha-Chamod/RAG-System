@@ -3,12 +3,13 @@ Vision LLM image description generator with SHA256 caching and size filtering.
 
 - Filters out images smaller than 3KB (logos, bullet points, UI icons) to save rate limits.
 - Checks SHA256 image_cache before issuing API calls to OpenRouter.
-- Uses vision-capable LLM (e.g. nvidia/nemotron-nano-12b-v2-vl:free).
+- Uses LangChain ChatOpenAI with automatic LangSmith tracing and max_retries.
 """
 
 import base64
 import hashlib
-import httpx
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 from app.config import settings
 from app.ingestion.image_cache import get_cached_description, cache_description
 from app.utils.logging import get_logger
@@ -25,7 +26,7 @@ IMAGE_PROMPT = (
 
 
 async def describe_image(image_bytes: bytes) -> str | None:
-    """Send raw image bytes to Vision LLM. Returns description string or None."""
+    """Send raw image bytes to Vision LLM using LangChain ChatOpenAI. Returns description string or None."""
     if len(image_bytes) < MIN_IMAGE_BYTES:
         logger.debug(f"Skipping tiny image ({len(image_bytes)} bytes < {MIN_IMAGE_BYTES} threshold)")
         return None
@@ -35,35 +36,37 @@ async def describe_image(image_bytes: bytes) -> str | None:
     if (cached := get_cached_description(image_hash)) is not None:
         return cached
 
+    api_key = settings.OPENROUTER_API_KEY.strip()
+    if not api_key:
+        logger.warning("OPENROUTER_API_KEY missing for image description")
+        return None
+
     # Prepare base64 image string
     b64_data = base64.b64encode(image_bytes).decode("utf-8")
 
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"},
-                json={
-                    "model": settings.VISION_LLM_MODEL,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": IMAGE_PROMPT},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": f"data:image/png;base64,{b64_data}"},
-                                },
-                            ],
-                        }
-                    ],
-                },
-                timeout=60.0,
-            )
-            resp.raise_for_status()
-            description = resp.json()["choices"][0]["message"]["content"].strip()
+        llm = ChatOpenAI(
+            model=settings.VISION_LLM_MODEL,
+            openai_api_key=api_key,
+            openai_api_base="https://openrouter.ai/api/v1",
+            temperature=0.2,
+            max_retries=2,
+        )
 
-        logger.info(f"Generated Vision description ({len(description)} chars): {description[:60]}...")
+        msg = HumanMessage(
+            content=[
+                {"type": "text", "text": IMAGE_PROMPT},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{b64_data}"},
+                },
+            ]
+        )
+
+        response = await llm.ainvoke([msg])
+        description = str(response.content).strip()
+
+        logger.info(f"Generated Vision description via LangChain ({len(description)} chars): {description[:60]}...")
         # Save to SQLite hash cache
         cache_description(image_hash, description)
         return description

@@ -10,7 +10,9 @@ interface Props {
 
 export const FileUploadModal: React.FC<Props> = ({ token, onClose, onSuccess }) => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [uploadStep, setUploadStep] = useState<string>('');
   const [result, setResult] = useState<IngestResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,13 +22,33 @@ export const FileUploadModal: React.FC<Props> = ({ token, onClose, onSuccess }) 
     }
   };
 
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      setSelectedFiles(Array.from(e.dataTransfer.files));
+    }
+  };
+
   const handleUpload = async () => {
     if (selectedFiles.length === 0) return;
     setLoading(true);
     setError(null);
     setResult(null);
+    setUploadStep('Uploading & parsing files...');
 
     try {
+      setUploadStep('Extracting images & text chunking...');
       const res = await uploadFiles(selectedFiles, token);
       setResult(res);
       onSuccess(res);
@@ -34,6 +56,7 @@ export const FileUploadModal: React.FC<Props> = ({ token, onClose, onSuccess }) 
       setError(err.message || 'Ingestion failed');
     } finally {
       setLoading(false);
+      setUploadStep('');
     }
   };
 
@@ -49,24 +72,35 @@ export const FileUploadModal: React.FC<Props> = ({ token, onClose, onSuccess }) 
     >
       <div className="glass-panel animate-fade-in" style={{ width: '520px', padding: '28px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <h2 style={{ fontSize: '1.3rem', fontWeight: 700 }}>📁 Multimodal Document Ingestion</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-main)' }}>Upload Documents</h2>
+          </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: '1.2rem', cursor: 'pointer' }}>
             ✕
           </button>
         </div>
 
         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '20px' }}>
-          Upload PDF, DOCX, XLSX, TXT, MD, or images. Supports parent-child chunking (~2000 / ~400 chars) and SHA-256 vision caching.
+          Upload your files — they'll be processed and made searchable by AI. Supports PDF, DOCX, XLSX, TXT, MD, and images.
         </p>
 
         <div
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
           style={{
-            border: '2px dashed var(--border-glow)',
+            border: `2px dashed ${isDragging ? 'var(--accent-cyan)' : 'var(--border-glow)'}`,
             borderRadius: '12px',
             padding: '32px 20px',
             textAlign: 'center',
-            background: 'rgba(15, 23, 42, 0.5)',
+            background: isDragging ? 'rgba(6, 182, 212, 0.15)' : 'rgba(15, 23, 42, 0.5)',
             marginBottom: '20px',
+            transition: 'all 0.2s ease',
           }}
         >
           <input
@@ -78,12 +112,18 @@ export const FileUploadModal: React.FC<Props> = ({ token, onClose, onSuccess }) 
             style={{ display: 'none' }}
           />
           <label htmlFor="file-upload-input" style={{ cursor: 'pointer' }}>
-            <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📤</div>
-            <div style={{ fontWeight: 600, color: 'var(--text-main)', marginBottom: '4px' }}>
-              Click to browse files
+            <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'rgba(99, 102, 241, 0.15)', border: '1px solid rgba(99, 102, 241, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+            </div>
+            <div style={{ fontWeight: 600, color: 'var(--text-main)', marginBottom: '4px', fontSize: '0.9rem' }}>
+              {isDragging ? 'Drop files here' : 'Drag & drop files here or click to browse'}
             </div>
             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-              PDF, DOCX, XLSX, TXT, MD, PNG, JPG
+              PDF, DOCX, XLSX, TXT, MD, PNG, JPG (Max 50MB)
             </div>
           </label>
 
@@ -99,6 +139,13 @@ export const FileUploadModal: React.FC<Props> = ({ token, onClose, onSuccess }) 
           )}
         </div>
 
+        {uploadStep && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', color: 'var(--accent-cyan)', fontSize: '0.82rem' }}>
+            <div className="pulse-glow" style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-cyan)' }} />
+            <span>{uploadStep}</span>
+          </div>
+        )}
+
         {error && (
           <div style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', fontSize: '0.85rem', marginBottom: '16px' }}>
             {error}
@@ -107,7 +154,7 @@ export const FileUploadModal: React.FC<Props> = ({ token, onClose, onSuccess }) 
 
         {result && (
           <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', color: '#34d399', fontSize: '0.85rem', marginBottom: '16px' }}>
-            <strong>✅ Ingestion Complete!</strong>
+            <strong>Ingestion Complete</strong>
             <div>Total Chunks Created: {result.total_chunks}</div>
             <div>Images Described: {result.total_images}</div>
           </div>
@@ -122,7 +169,7 @@ export const FileUploadModal: React.FC<Props> = ({ token, onClose, onSuccess }) 
             onClick={handleUpload}
             disabled={loading || selectedFiles.length === 0}
           >
-            {loading ? 'Processing & Vectorizing...' : 'Upload & Ingest'}
+            {loading ? 'Processing...' : 'Upload & Process'}
           </button>
         </div>
       </div>

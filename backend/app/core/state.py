@@ -25,7 +25,9 @@ class GraphState(TypedDict):
     user_id: str
     thread_id: str
     query: str
+    query_type: str
     retrieved_docs: list[dict]
     relevance_action: str
     answer: str
     model: str
+

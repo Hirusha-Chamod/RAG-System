@@ -41,6 +41,10 @@ async def lifespan(app: FastAPI):
     settings.ensure_data_dirs()
     logger.info("Data directories verified")
 
+    # Warn if JWT secret is still the insecure default
+    if settings.JWT_SECRET_KEY == "ai-nexus-rag-engine-secret-key-change-in-production":
+        logger.warning("⚠️  Using default JWT secret! Set JWT_SECRET_KEY in .env for production.")
+
     # Configure LangSmith tracing
     settings.setup_langsmith_env()
     if settings.LANGSMITH_API_KEY:

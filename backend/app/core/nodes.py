@@ -15,6 +15,7 @@ Nodes MUST return partial dicts of updated fields ONLY. Never return full state.
 import time
 import re
 import warnings
+from langsmith import traceable
 from langchain_core.messages import SystemMessage
 from app.ingestion.vectorstore import get_vectorstore
 from app.ingestion.parent_store import get_parents
@@ -42,14 +43,32 @@ CLARIFY_PROMPT = (
 
 EXTRACTION_TRIGGER_EVERY_N_TURNS = 5
 
+FALLBACK_RESPONSE = (
+    "I couldn't find relevant information in your uploaded documents to answer that. "
+    "Feel free to upload additional files or ask another question!"
+)
+
 GREETING_PATTERNS = re.compile(
     r"^\s*(hello|hi|hey|greetings|good\s+(morning|afternoon|evening)|howdy|who\s+are\s+you|what\s+can\s+you\s+do|help|my\s+name\s+is|i\s+am\s+).*",
     re.IGNORECASE,
 )
 
 
+# ── Node 0: Early Query Classification (Greeting Detection) ───────────
+
+@traceable(name="classify_query_node", run_type="chain")
+def classify_query_node(state):
+    """Detect greetings early to bypass vector retrieval & reranking compute."""
+    query = state.get("query", "").strip()
+    if GREETING_PATTERNS.match(query):
+        logger.info(f"Greeting detected early ('{query}') -> query_type='greeting'")
+        return {"query_type": "greeting", "relevance_action": "synthesize"}
+    return {"query_type": "rag"}
+
+
 # ── Node 1: Manage history & Inject Long-Term Memory ──────────────────────
 
+@traceable(name="manage_history_node", run_type="chain")
 async def manage_history_node(state):
     """Inject long-term user memories + compress older conversation turns if history > SUMMARY_TRIGGER."""
     user_id = state.get("user_id")
@@ -79,63 +98,22 @@ async def manage_history_node(state):
     return updates
 
 
+from app.core.retrieval import retrieve_candidate_parents
+
+
 # ── Node 2: Two-Stage Retrieve & Re-Rank ────────────────────────────
 
+@traceable(name="retrieve_node", run_type="retriever")
 def retrieve_node(state):
     """Stage 1: Widened ChromaDB vector search (k=15, user_id filter).
     Stage 2: Fetch parent texts from SQLite & re-rank using CrossEncoder down to top_n=5.
     """
     user_id = state.get("user_id")
     query = state.get("query", "")
-    vs = get_vectorstore()
 
-    results = vs.similarity_search_with_relevance_scores(
-        query,
-        k=settings.RETRIEVAL_K,
-        filter={"user_id": user_id} if user_id else None,
-    )
-
-    if not results:
-        logger.info(f"No documents retrieved for query: '{query[:40]}...' (user: {user_id})")
+    candidates = retrieve_candidate_parents(query, user_id, k=settings.RETRIEVAL_K)
+    if not candidates:
         return {"retrieved_docs": []}
-
-    best_by_parent = {}
-    for doc, score in results:
-        pid = doc.metadata.get("parent_id")
-        if pid is None:
-            doc_key = f"raw_{hash(doc.page_content)}"
-            best_by_parent[doc_key] = {
-                "content": doc.page_content,
-                "score": score,
-                "source": doc.metadata.get("source", "unknown"),
-                "is_raw": True,
-            }
-            continue
-
-        if pid not in best_by_parent or score > best_by_parent[pid]["score"]:
-            best_by_parent[pid] = {
-                "score": score,
-                "source": doc.metadata.get("source", "unknown"),
-                "is_raw": False,
-            }
-
-    text_parent_ids = [pid for pid, info in best_by_parent.items() if not info["is_raw"]]
-    parents = get_parents(text_parent_ids) if text_parent_ids else {}
-
-    candidates = []
-    for pid, info in best_by_parent.items():
-        if info["is_raw"]:
-            candidates.append({
-                "content": info["content"],
-                "score": info["score"],
-                "source": info["source"],
-            })
-        elif pid in parents:
-            candidates.append({
-                "content": parents[pid],
-                "score": info["score"],
-                "source": info["source"],
-            })
 
     reranked_docs = rerank_parents(query, candidates, top_n=settings.TOP_N_SYNTHESIS)
     return {"retrieved_docs": reranked_docs}
@@ -143,6 +121,7 @@ def retrieve_node(state):
 
 # ── Node 3: 3-Way Decision Gate (with Greeting Detection) ───────────
 
+@traceable(name="decide_node", run_type="chain")
 def decide_node(state):
     """3-Way Decision Gate."""
     query = state.get("query", "").strip()
@@ -170,6 +149,7 @@ def decide_node(state):
 
 # ── Node 4: Synthesize answer from context & Extract Memory ──────────
 
+@traceable(name="synthesize_node", run_type="chain")
 async def synthesize_node(state):
     """Async call to OpenRouter with top re-ranked parent text context."""
     docs = state.get("retrieved_docs", [])
@@ -194,15 +174,18 @@ async def synthesize_node(state):
 
     if user_id and len(messages) > 0 and len(messages) % EXTRACTION_TRIGGER_EVERY_N_TURNS == 0:
         recent_snippet = messages[-EXTRACTION_TRIGGER_EVERY_N_TURNS:]
-        extracted_fact = await call_openrouter_extract_memory(recent_snippet)
-        if extracted_fact:
-            set_memory(user_id, key=f"fact_{int(time.time())}", value=extracted_fact)
+        avg_len = sum(len(getattr(m, "content", "")) for m in recent_snippet) / len(recent_snippet)
+        if avg_len > 20:
+            extracted_fact = await call_openrouter_extract_memory(recent_snippet)
+            if extracted_fact:
+                set_memory(user_id, key=f"fact_{int(time.time())}", value=extracted_fact)
 
     return {"answer": answer}
 
 
 # ── Node 5: Clarify question for ambiguous matches ───────────────────
 
+@traceable(name="clarify_node", run_type="chain")
 async def clarify_node(state):
     """Async call asking user to clarify their query based on partial document matches."""
     docs = state.get("retrieved_docs", [])
@@ -225,12 +208,8 @@ async def clarify_node(state):
 
 # ── Node 6: Deterministic Fallback (FR-10) ───────────────────────────
 
+@traceable(name="fallback_node", run_type="chain")
 def fallback_node(state):
     """Deterministic response when score is below clarify threshold — zero hallucination risk."""
-    return {
-        "answer": (
-            "I don't have any relevant documents in your library to answer that question. "
-            "You can upload PDF, DOCX, XLSX, TXT, or Markdown files via the "
-            "/ingest endpoint to add knowledge I can search against."
-        )
-    }
+    return {"answer": FALLBACK_RESPONSE}
+

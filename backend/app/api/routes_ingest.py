@@ -72,7 +72,7 @@ async def delete_document(
     vs = get_vectorstore()
     try:
         if hasattr(vs, "_collection") and vs._collection is not None:
-            vs._collection.delete(where={"$and": [{"user_id": user_id}, {"source": source}]})
+            vs._collection.delete(where={"user_id": user_id, "source": source})
     except Exception as e:
         logger.warning(f"ChromaDB delete exception for {source}: {e}")
 
@@ -102,6 +102,13 @@ async def _process_single_file(upload_file: UploadFile, user_id: str) -> IngestF
     file_path = os.path.join(settings.UPLOAD_DIR, f"{file_id}_{filename}")
     try:
         content = await upload_file.read()
+        max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+        if len(content) > max_bytes:
+            return IngestFileResult(
+                filename=filename,
+                status="error",
+                error_message=f"File exceeds maximum allowed size of {settings.MAX_UPLOAD_SIZE_MB}MB",
+            )
         with open(file_path, "wb") as f:
             f.write(content)
     except Exception as e:
@@ -182,6 +189,13 @@ async def _process_single_file(upload_file: UploadFile, user_id: str) -> IngestF
                 )
                 chunks_created += len(children)
 
+        # Clean up temporary disk upload file after processing
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception as e:
+            logger.warning(f"Could not remove temp upload file {file_path}: {e}")
+
         return IngestFileResult(
             filename=filename,
             status="success",
@@ -191,6 +205,11 @@ async def _process_single_file(upload_file: UploadFile, user_id: str) -> IngestF
 
     except Exception as e:
         logger.error(f"Ingestion error processing {filename}: {e}", exc_info=True)
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception:
+            pass
         return IngestFileResult(
             filename=filename,
             status="error",
