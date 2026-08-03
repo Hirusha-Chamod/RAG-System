@@ -1,17 +1,19 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { MessageBubble } from './MessageBubble';
 import type { ChatMessage } from '../types';
 
 interface Props {
   messages: ChatMessage[];
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, attachedFile?: File | null) => void;
   loading: boolean;
   disabled: boolean;
 }
 
 export const ChatWindow: React.FC<Props> = ({ messages, onSendMessage, loading, disabled }) => {
-  const [input, setInput] = React.useState('');
+  const [input, setInput] = useState('');
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -21,11 +23,19 @@ export const ChatWindow: React.FC<Props> = ({ messages, onSendMessage, loading, 
     scrollToBottom();
   }, [messages, loading]);
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setAttachedFile(e.target.files[0]);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || loading || disabled) return;
-    onSendMessage(input);
+    if ((!input.trim() && !attachedFile) || loading || disabled) return;
+    onSendMessage(input, attachedFile);
     setInput('');
+    setAttachedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   return (
@@ -78,47 +88,98 @@ export const ChatWindow: React.FC<Props> = ({ messages, onSendMessage, loading, 
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Prompt Box */}
-      <form
-        onSubmit={handleSubmit}
-        style={{
-          padding: '16px 20px',
-          borderTop: '1px solid var(--border-color)',
-          background: 'rgba(15, 23, 42, 0.4)',
-          display: 'flex',
-          gap: '12px',
-        }}
-      >
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={disabled ? 'Sign in to ask questions...' : 'Ask AI Nexus a question about your documents...'}
-          disabled={disabled || loading}
-          style={{
-            flex: 1,
-            background: 'rgba(255, 255, 255, 0.05)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '12px',
-            padding: '12px 18px',
-            color: 'var(--text-main)',
-            fontSize: '0.9rem',
-            outline: 'none',
-          }}
-        />
-        <button
-          type="submit"
-          disabled={disabled || loading || !input.trim()}
-          className="btn btn-primary"
-          style={{ padding: '0 20px', borderRadius: '12px', gap: '8px' }}
-        >
-          <span>Send</span>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13"></line>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-          </svg>
-        </button>
-      </form>
+      {/* Input Prompt Box + Attachment Container */}
+      <div style={{ borderTop: '1px solid var(--border-color)', background: 'rgba(15, 23, 42, 0.4)', padding: '12px 20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {/* Attached File Pill Badge */}
+        {attachedFile && (
+          <div className="animate-fade-in" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: 'rgba(6, 182, 212, 0.15)', border: '1px solid rgba(6, 182, 212, 0.3)', padding: '6px 12px', borderRadius: '20px', alignSelf: 'flex-start', fontSize: '0.8rem', color: 'var(--accent-cyan)' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>
+            <span style={{ fontWeight: 600 }}>{attachedFile.name}</span>
+            <span style={{ color: 'var(--text-dim)', fontSize: '0.75rem' }}>({(attachedFile.size / 1024).toFixed(1)} KB)</span>
+            <button
+              type="button"
+              onClick={() => {
+                setAttachedFile(null);
+                if (fileInputRef.current) fileInputRef.current.value = '';
+              }}
+              style={{ background: 'none', border: 'none', color: 'var(--accent-cyan)', cursor: 'pointer', fontSize: '0.85rem', padding: 0, marginLeft: '4px' }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          {/* File Attachment Input (Hidden) */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept=".pdf,.docx,.xlsx,.txt,.md,.png,.jpg,.jpeg"
+            style={{ display: 'none' }}
+          />
+
+          {/* Attachment Paperclip Button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled || loading}
+            title="Attach a file to this chat session"
+            style={{
+              background: 'rgba(255, 255, 255, 0.05)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '12px',
+              width: '42px',
+              height: '42px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: attachedFile ? 'var(--accent-cyan)' : 'var(--text-dim)',
+              cursor: disabled || loading ? 'not-allowed' : 'pointer',
+              transition: 'all 0.15s ease',
+              flexShrink: 0,
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+            </svg>
+          </button>
+
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={disabled ? 'Sign in to ask questions...' : attachedFile ? `Ask a question about ${attachedFile.name}...` : 'Ask AI Nexus a question about your documents...'}
+            disabled={disabled || loading}
+            style={{
+              flex: 1,
+              background: 'rgba(255, 255, 255, 0.05)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '12px',
+              padding: '12px 18px',
+              color: 'var(--text-main)',
+              fontSize: '0.9rem',
+              outline: 'none',
+            }}
+          />
+
+          <button
+            type="submit"
+            disabled={disabled || loading || (!input.trim() && !attachedFile)}
+            className="btn btn-primary"
+            style={{ padding: '0 20px', borderRadius: '12px', gap: '8px', height: '42px' }}
+          >
+            <span>Send</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </form>
+      </div>
     </div>
   );
 };

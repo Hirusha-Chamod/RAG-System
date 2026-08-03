@@ -34,10 +34,13 @@ export async function getModels(): Promise<ModelInfo> {
   return resp.json();
 }
 
-export async function uploadFiles(files: FileList | File[], token: string): Promise<IngestResponse> {
+export async function uploadFiles(files: FileList | File[], token: string, sessionId?: string): Promise<IngestResponse> {
   const formData = new FormData();
   for (let i = 0; i < files.length; i++) {
     formData.append('files', files[i]);
+  }
+  if (sessionId) {
+    formData.append('session_id', sessionId);
   }
 
   const resp = await fetch(`${API_BASE}/ingest`, {

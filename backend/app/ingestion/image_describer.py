@@ -1,9 +1,9 @@
 """
-Vision LLM image description generator with SHA256 caching and size filtering.
+Vision LLM image description generator with SHA256 caching, size filtering, and 429 rate limit fallbacks.
 
 - Filters out images smaller than 3KB (logos, bullet points, UI icons) to save rate limits.
 - Checks SHA256 image_cache before issuing API calls to OpenRouter.
-- Uses LangChain ChatOpenAI with automatic LangSmith tracing and max_retries.
+- Uses LangChain ChatOpenAI with automatic 429 failover roster and LangSmith tracing.
 """
 
 import base64
@@ -24,6 +24,12 @@ IMAGE_PROMPT = (
     "charts, diagrams, tables, or key data it contains for a search index."
 )
 
+VISION_FALLBACK_ROSTER = [
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "inclusionai/ling-3.0-flash:free",
+]
+
 
 async def describe_image(image_bytes: bytes) -> str | None:
     """Send raw image bytes to Vision LLM using LangChain ChatOpenAI. Returns description string or None."""
@@ -43,34 +49,42 @@ async def describe_image(image_bytes: bytes) -> str | None:
 
     # Prepare base64 image string
     b64_data = base64.b64encode(image_bytes).decode("utf-8")
+    models_to_try = [settings.VISION_LLM_MODEL] + [m for m in VISION_FALLBACK_ROSTER if m != settings.VISION_LLM_MODEL]
 
-    try:
-        llm = ChatOpenAI(
-            model=settings.VISION_LLM_MODEL,
-            openai_api_key=api_key,
-            openai_api_base="https://openrouter.ai/api/v1",
-            temperature=0.2,
-            max_retries=2,
-        )
+    for current_model in models_to_try:
+        try:
+            llm = ChatOpenAI(
+                model=current_model,
+                openai_api_key=api_key,
+                openai_api_base="https://openrouter.ai/api/v1",
+                temperature=0.2,
+                max_retries=1,
+            )
 
-        msg = HumanMessage(
-            content=[
-                {"type": "text", "text": IMAGE_PROMPT},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{b64_data}"},
-                },
-            ]
-        )
+            msg = HumanMessage(
+                content=[
+                    {"type": "text", "text": IMAGE_PROMPT},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64_data}"},
+                    },
+                ]
+            )
 
-        response = await llm.ainvoke([msg])
-        description = str(response.content).strip()
+            response = await llm.ainvoke([msg])
+            description = str(response.content).strip()
 
-        logger.info(f"Generated Vision description via LangChain ({len(description)} chars): {description[:60]}...")
-        # Save to SQLite hash cache
-        cache_description(image_hash, description)
-        return description
+            logger.info(f"Generated Vision description via LangChain [{current_model}] ({len(description)} chars): {description[:60]}...")
+            # Save to SQLite hash cache
+            cache_description(image_hash, description)
+            return description
 
-    except Exception as e:
-        logger.error(f"Vision description call failed: {e}")
-        return None
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "503" in err_str or "Rate limit" in err_str:
+                logger.warning(f"Vision model '{current_model}' rate limited. Trying next fallback model...")
+                continue
+            logger.error(f"Vision description call failed ({current_model}): {e}")
+            return None
+
+    return None

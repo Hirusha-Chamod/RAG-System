@@ -1,5 +1,5 @@
 """
-Core retrieval service: Stage 1 ChromaDB vector search + parent-fetch deduplication.
+Core retrieval service: Stage 1 ChromaDB vector search + session scoping + parent-fetch deduplication.
 """
 
 from app.ingestion.vectorstore import get_vectorstore
@@ -9,8 +9,8 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def retrieve_candidate_parents(query: str, user_id: str | None, k: int) -> list[dict]:
-    """Execute Stage 1 similarity search in ChromaDB, deduplicate by parent_id, and fetch parent texts from SQLite."""
+def retrieve_candidate_parents(query: str, user_id: str | None, session_id: str | None = None, k: int = 15) -> list[dict]:
+    """Execute Stage 1 similarity search in ChromaDB with session scoping, deduplicate by parent_id, and fetch parent texts from SQLite."""
     vs = get_vectorstore()
 
     results = vs.similarity_search_with_relevance_scores(
@@ -20,8 +20,18 @@ def retrieve_candidate_parents(query: str, user_id: str | None, k: int) -> list[
     )
 
     if not results:
-        logger.info(f"No documents retrieved for query: '{query[:40]}...' (user: {user_id})")
+        logger.info(f"No documents retrieved for query: '{query[:40]}...' (user: {user_id}, session: {session_id})")
         return []
+
+    # Filter out session documents belonging to OTHER sessions
+    if session_id:
+        filtered_results = []
+        for doc, score in results:
+            doc_sess = doc.metadata.get("session_id")
+            # Include if doc is global (no session_id) OR matches current active session_id
+            if not doc_sess or doc_sess == session_id:
+                filtered_results.append((doc, score))
+        results = filtered_results
 
     best_by_parent = {}
     for doc, score in results:

@@ -7,7 +7,7 @@ import { FileUploadModal } from './components/FileUploadModal';
 import { MemoryDrawer } from './components/MemoryDrawer';
 import { DocumentDrawer } from './components/DocumentDrawer';
 import { ToastContainer, type ToastMessage } from './components/Toast';
-import { getModels, sendChatMessageStream, fetchChatHistory, fetchUserSessions, deleteSession } from './api/client';
+import { getModels, sendChatMessageStream, fetchChatHistory, fetchUserSessions, deleteSession, uploadFiles } from './api/client';
 import type { User, ModelInfo, ChatMessage } from './types';
 
 export const App: React.FC = () => {
@@ -118,13 +118,27 @@ export const App: React.FC = () => {
     showToast('Logged out successfully', 'info');
   };
 
-  const handleSendMessage = async (text: string) => {
+  const handleSendMessage = async (text: string, attachedFile?: File | null) => {
     if (!user) {
       setShowAuthModal(true);
       return;
     }
 
-    const cleanPrompt = text.trim();
+    setChatLoading(true);
+
+    if (attachedFile) {
+      showToast(`Uploading ${attachedFile.name} for this session...`, 'info');
+      try {
+        await uploadFiles([attachedFile], user.access_token, sessionId);
+        showToast(`${attachedFile.name} processed for active session!`, 'success');
+      } catch (err: any) {
+        showToast(`File upload failed: ${err.message}`, 'error');
+        setChatLoading(false);
+        return;
+      }
+    }
+
+    const cleanPrompt = text.trim() || (attachedFile ? `Explain the key points of ${attachedFile.name}` : '');
     const promptTitle = cleanPrompt.slice(0, 26) + (cleanPrompt.length > 26 ? '...' : '');
 
     // Dynamically update active session title to user prompt preview
@@ -149,7 +163,7 @@ export const App: React.FC = () => {
     const userMsg: ChatMessage = {
       id: `usr_${Date.now()}`,
       sender: 'user',
-      text,
+      text: cleanPrompt,
       timestamp,
     };
 
@@ -162,11 +176,10 @@ export const App: React.FC = () => {
     };
 
     setMessages((prev) => [...prev, userMsg, initialAssistantMsg]);
-    setChatLoading(true);
 
     try {
       await sendChatMessageStream(
-        text,
+        cleanPrompt,
         sessionId,
         selectedModel,
         user.access_token,

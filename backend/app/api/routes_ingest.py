@@ -9,7 +9,7 @@ Secured with Depends(get_current_user) JWT Bearer authentication.
 
 import os
 import uuid
-from fastapi import APIRouter, UploadFile, File, Depends, Query, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Depends, Query, HTTPException
 from app.ingestion.loaders import load_file, SUPPORTED_EXTENSIONS
 from app.ingestion.image_extraction import extract_images_pdf, extract_images_from_zip
 from app.ingestion.image_describer import describe_image
@@ -28,16 +28,17 @@ router = APIRouter()
 @router.post("/ingest", response_model=IngestResponse)
 async def ingest_files(
     files: list[UploadFile] = File(...),
+    session_id: str | None = Form(None),
     current_user: dict = Depends(get_current_user),
 ):
-    """Ingest one or more files into the RAG pipeline for the authenticated user."""
+    """Ingest one or more files into the RAG pipeline for the authenticated user, optionally scoped to session_id."""
     user_id = current_user["user_id"]
     results = []
     total_chunks = 0
     total_images = 0
 
     for upload_file in files:
-        file_result = await _process_single_file(upload_file, user_id)
+        file_result = await _process_single_file(upload_file, user_id, session_id=session_id)
         total_chunks += file_result.chunks_created
         total_images += file_result.images_processed
         results.append(file_result)
@@ -85,7 +86,7 @@ async def delete_document(
     }
 
 
-async def _process_single_file(upload_file: UploadFile, user_id: str) -> IngestFileResult:
+async def _process_single_file(upload_file: UploadFile, user_id: str, session_id: str | None = None) -> IngestFileResult:
     """Process a single file with isolation — never raises an unhandled exception."""
     file_id = str(uuid.uuid4())[:8]
     filename = upload_file.filename or "file"
@@ -126,10 +127,13 @@ async def _process_single_file(upload_file: UploadFile, user_id: str) -> IngestF
             description = await describe_image(content)
             if description:
                 parent_id = f"{file_id}_img"
-                save_parent(parent_id, f"[Image Description]: {description}", filename, user_id)
+                save_parent(parent_id, f"[Image Description]: {description}", filename, user_id, session_id=session_id)
+                meta = {"source": filename, "parent_id": parent_id, "user_id": user_id}
+                if session_id:
+                    meta["session_id"] = session_id
                 vs.add_texts(
                     texts=[description],
-                    metadatas=[{"source": filename, "parent_id": parent_id, "user_id": user_id}],
+                    metadatas=[meta],
                 )
                 images_processed += 1
                 chunks_created += 1
@@ -180,12 +184,19 @@ async def _process_single_file(upload_file: UploadFile, user_id: str) -> IngestF
             parents, children = split_into_parents_and_children(doc, file_id, doc_index)
 
             for p in parents:
-                save_parent(p["parent_id"], p["content"], filename, user_id)
+                save_parent(p["parent_id"], p["content"], filename, user_id, session_id=session_id)
 
             if children:
+                child_metadatas = []
+                for c in children:
+                    m = {**c["metadata"], "source": filename, "user_id": user_id}
+                    if session_id:
+                        m["session_id"] = session_id
+                    child_metadatas.append(m)
+
                 vs.add_texts(
                     texts=[c["content"] for c in children],
-                    metadatas=[{**c["metadata"], "source": filename, "user_id": user_id} for c in children],
+                    metadatas=child_metadatas,
                 )
                 chunks_created += len(children)
 

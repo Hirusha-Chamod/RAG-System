@@ -2,7 +2,7 @@
 SQLite storage for parent document text.
 
 Keyed by `parent_id`. Used by retrieve_node during the parent-fetch hop.
-Supports listing user documents and deleting documents.
+Supports listing user documents, session-scoped parent storage, and deleting documents.
 Uses thread-local connection manager with WAL mode & busy_timeout.
 """
 
@@ -14,24 +14,35 @@ logger = get_logger(__name__)
 
 
 def init_db():
-    """Initialize parent_store SQLite table."""
+    """Initialize parent_store SQLite table and auto-migrate session_id column."""
     with get_db_connection(settings.PARENT_STORE_PATH) as c:
         c.execute("""CREATE TABLE IF NOT EXISTS parents (
             parent_id TEXT PRIMARY KEY,
             content TEXT,
             source TEXT,
-            user_id TEXT
+            user_id TEXT,
+            session_id TEXT
         )""")
         c.execute("CREATE INDEX IF NOT EXISTS idx_parents_user ON parents (user_id)")
+
+        # Auto-migrate session_id column if table existed without it
+        table_info = c.execute("PRAGMA table_info(parents)").fetchall()
+        column_names = [info[1] for info in table_info]
+        if "session_id" not in column_names:
+            c.execute("ALTER TABLE parents ADD COLUMN session_id TEXT")
+            logger.info("Migrated parent_store table to include session_id column")
+
+        c.execute("CREATE INDEX IF NOT EXISTS idx_parents_user_session ON parents (user_id, session_id)")
+
     logger.info("Parent store DB initialized")
 
 
-def save_parent(parent_id: str, content: str, source: str, user_id: str):
-    """Store or update a parent document entry."""
+def save_parent(parent_id: str, content: str, source: str, user_id: str, session_id: str | None = None):
+    """Store or update a parent document entry with optional session_id scoping."""
     with get_db_connection(settings.PARENT_STORE_PATH) as c:
         c.execute(
-            "REPLACE INTO parents VALUES (?,?,?,?)",
-            (parent_id, content, source, user_id),
+            "REPLACE INTO parents (parent_id, content, source, user_id, session_id) VALUES (?,?,?,?,?)",
+            (parent_id, content, source, user_id, session_id),
         )
 
 
